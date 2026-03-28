@@ -2308,7 +2308,7 @@
       "error_funds": "Insufficient cash for tier cost"
     },
     "mechanics": {
-      "cost": "One-time cost deducted immediately. Tiers 1-10: $100K \u00d7 tier. Tiers 11-20: super-linear ($1.5M to $15M).",
+      "cost": "One-time cost deducted immediately. Tiers 1-10: $250K to $2.5M. Tiers 11-20: $3.75M to $37.5M.",
       "duration": "Sampled from Normal(mean_days, std_days), minimum 30 days. Tiers 1-10: 35d-380d mean (~40-50% CV). Tiers 11-20: 420d-1400d mean (~55-80% CV).",
       "quality_boost": "Sampled from Normal(mean_quality, std_quality), minimum 0.001. Tiers 1-10: +0.04 to +0.85 mean (~50% CV). Tiers 11-20: +1.1 to +8.0 mean (~55-80% CV). Frontier tiers are cheaper per quality point but much riskier. Permanent addition to q_shared.",
       "repeatability": "Same tier can be started multiple times. Each invocation gets independent samples. Only one in-progress per tier.",
@@ -2328,14 +2328,14 @@
           "input": {
             "tier": 1
           },
-          "output": "=== R&D Tier Started ===\nTier 1: Prompt Engineering Optimization (invocation t1_1)\nCost: $100,000 (deducted)\nExpected completion: ~day 42 (42 days)\nExpected quality boost: +0.048\nDescription: Systematic prompt tuning and output consistency improvements"
+          "output": "=== R&D Tier Started ===\nTier 1: Prompt Engineering Optimization (invocation t1_1)\nCost: $250,000 (deducted)\nExpected completion: ~day 42 (42 days)\nExpected quality boost: +0.048\nDescription: Systematic prompt tuning and output consistency improvements"
         },
         {
           "label": "Repeat tier 1",
           "input": {
             "tier": 1
           },
-          "output": "=== R&D Tier Started ===\nTier 1: Prompt Engineering Optimization (invocation t1_2)\nCost: $100,000 (deducted)\nExpected completion: ~day 185 (33 days)\nExpected quality boost: +0.029\nDescription: Systematic prompt tuning and output consistency improvements"
+          "output": "=== R&D Tier Started ===\nTier 1: Prompt Engineering Optimization (invocation t1_2)\nCost: $250,000 (deducted)\nExpected completion: ~day 185 (33 days)\nExpected quality boost: +0.029\nDescription: Systematic prompt tuning and output consistency improvements"
         }
       ],
       "failure": [
@@ -2351,7 +2351,7 @@
           "input": {
             "tier": 5
           },
-          "output": "Insufficient funds. Tier 5 costs $500,000. Available: $18,000"
+          "output": "Insufficient funds. Tier 5 costs $1,250,000. Available: $18,000"
         }
       ]
     }
@@ -2372,7 +2372,7 @@
           {
             "tier": 1,
             "name": "Prompt Engineering Optimization",
-            "cost": 100000,
+            "cost": 250000,
             "mean_days": 35,
             "mean_quality_boost": 0.04,
             "in_progress": 0,
@@ -2393,12 +2393,12 @@
         {
           "label": "With mixed statuses",
           "input": {},
-          "output": "=== R&D Research Tiers ===\nTiers are repeatable \u2014 same tier can be started again after completion.\n\nALL TIERS:\n  Tier 1: Prompt Engineering Optimization \u2014 $100,000, ~35d \u00b112d, +0.04 \u00b10.02 quality\n    Status: completed 2x, total +0.079 quality\n  Tier 2: Evaluation & Testing Pipeline \u2014 $200,000, ~50d \u00b120d, +0.07 \u00b10.04 quality\n    Status: IN PROGRESS (~12d left)\n  Tier 3: Caching & Latency Optimization \u2014 $300,000, ~70d \u00b130d, +0.11 \u00b10.06 quality\n    Status: not started\n  ..."
+          "output": "=== R&D Research Tiers ===\nTiers are repeatable \u2014 same tier can be started again after completion.\n\nALL TIERS:\n  Tier 1: Prompt Engineering Optimization \u2014 $250,000, ~35d \u00b112d, +0.04 \u00b10.02 quality\n    Status: completed 2x, total +0.079 quality\n  Tier 2: Evaluation & Testing Pipeline \u2014 $500,000, ~50d \u00b120d, +0.07 \u00b10.04 quality\n    Status: IN PROGRESS (~12d left)\n  Tier 3: Caching & Latency Optimization \u2014 $750,000, ~70d \u00b130d, +0.11 \u00b10.06 quality\n    Status: not started\n  ..."
         },
         {
           "label": "Early game",
           "input": {},
-          "output": "=== R&D Research Tiers ===\nTiers are repeatable \u2014 same tier can be started again after completion.\n\nALL TIERS:\n  Tier 1: Prompt Engineering Optimization \u2014 $100,000, ~35d \u00b112d, +0.04 \u00b10.02 quality\n    Status: not started\n  ...\n  Tier 10: Self-Evolving Model Ecosystem \u2014 $1,000,000, ~380d \u00b1185d, +0.85 \u00b10.43 quality\n    Status: not started\n\n  --- FRONTIER TIERS (11-20) ---\n  Tier 11: Synthetic Data Engine \u2014 $1,500,000, ~420d \u00b1230d, +1.10 \u00b10.66 quality\n    Status: not started\n  ...\n  Tier 20: Artificial General Reasoning \u2014 $15,000,000, ~1400d \u00b11120d, +8.00 \u00b16.40 quality\n    Status: not started\n\nAll 20 tiers independent and repeatable. Use start_research_project(tier=N) to begin."
+          "output": "=== R&D Research Tiers ===\nTiers are repeatable \u2014 same tier can be started again after completion.\n\nALL TIERS:\n  Tier 1: Prompt Engineering Optimization \u2014 $250,000, ~35d \u00b112d, +0.04 \u00b10.02 quality\n    Status: not started\n  ...\n  Tier 10: Self-Evolving Model Ecosystem \u2014 $2,500,000, ~380d \u00b1185d, +0.85 \u00b10.43 quality\n    Status: not started\n\n  --- FRONTIER TIERS (11-20) ---\n  Tier 11: Synthetic Data Engine \u2014 $3,750,000, ~420d \u00b1230d, +1.10 \u00b10.66 quality\n    Status: not started\n  ...\n  Tier 20: Artificial General Reasoning \u2014 $37,500,000, ~1400d \u00b11120d, +8.00 \u00b16.40 quality\n    Status: not started\n\nAll 20 tiers independent and repeatable. Use start_research_project(tier=N) to begin."
         }
       ]
     }

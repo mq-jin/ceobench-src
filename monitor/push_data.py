@@ -44,12 +44,11 @@ def _open_run_db(run_dir: Path) -> sqlite3.Connection | None:
 
 # Run registry
 RUN_REGISTRY = {
-    "1f9b61d5": {"label": "GLM-5 v3.2j run 1", "model": "GLM-5-FP8", "seed": 42, "days": 1095},
-    "53ae94df": {"label": "GLM-5 v3.2j run 2", "model": "GLM-5-FP8", "seed": 42, "days": 1095},
-    "a5993752": {"label": "GLM-5 v3.2j run 3", "model": "GLM-5-FP8", "seed": 42, "days": 1095},
-    "dac431d7": {"label": "GLM-5 v3.2j run 4", "model": "GLM-5-FP8", "seed": 42, "days": 1095},
-    "e406cb6f": {"label": "GLM-5 v3.2j run 5", "model": "GLM-5-FP8", "seed": 42, "days": 1095},
-    "9534be67": {"label": "Sonnet 4.6 Bedrock run 1", "model": "claude-sonnet-4-6", "seed": 42, "days": 1095},
+    "01ffbf46": {"label": "GLM-5 v3.2r run 1", "model": "GLM-5-FP8", "seed": 42, "days": 1095},
+    "8f02ee5f": {"label": "GLM-5 v3.2r run 2", "model": "GLM-5-FP8", "seed": 42, "days": 1095},
+    "a7845d76": {"label": "GLM-5 v3.2r run 3", "model": "GLM-5-FP8", "seed": 42, "days": 1095},
+    "ad005d5c": {"label": "GLM-5 v3.2r run 4", "model": "GLM-5-FP8", "seed": 42, "days": 1095},
+    "eb53faf1": {"label": "GLM-5 v3.2r run 5", "model": "GLM-5-FP8", "seed": 42, "days": 1095},
 }
 
 
@@ -154,29 +153,44 @@ def get_quality_series_from_db(run_dir: Path, max_points: int = 200) -> list:
 def get_qmin_series_from_db(run_dir: Path, max_points: int = 200) -> list:
     """Effective q_min per group over time from _hidden_group_params_history.
 
-    effective_q_min = base_q_min_mean + global_q_bias_total + drift_q_bias_total
+    Supports both old schema (current_q_min_mean column) and new accumulator
+    schema (drift_q_bias_total + global_q_bias_total applied to static base).
     """
-    from saas_bench.config import CUSTOMER_GROUPS
-    # Build base q_min_mean lookup from static config
-    base_qmin = {g.group_id: g.q_min_mean for g in CUSTOMER_GROUPS}
-
     conn = _open_run_db(run_dir)
     if not conn:
         return []
     try:
-        rows = conn.execute(
-            "SELECT day, group_id, drift_q_bias_total, global_q_bias_total "
-            "FROM _hidden_group_params_history ORDER BY day, group_id"
-        ).fetchall()
-        conn.close()
-        if not rows:
-            return []
-        series = []
-        for r in rows:
-            day, group_id, drift_q_bias, global_q_bias = r
-            base = base_qmin.get(group_id, 0.5)
-            effective_qmin = base + global_q_bias + drift_q_bias
-            series.append({"day": day, "group_id": group_id, "q_min": round(effective_qmin, 4)})
+        # Detect schema: check which columns exist
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(_hidden_group_params_history)").fetchall()}
+        use_accumulators = 'drift_q_bias_total' in cols
+
+        if use_accumulators:
+            from saas_bench.config import CUSTOMER_GROUPS
+            base_qmin = {gid: g.q_min_mean for gid, g in CUSTOMER_GROUPS.items()}
+            rows = conn.execute(
+                "SELECT day, group_id, drift_q_bias_total, global_q_bias_total "
+                "FROM _hidden_group_params_history ORDER BY day, group_id"
+            ).fetchall()
+            conn.close()
+            if not rows:
+                return []
+            series = []
+            for r in rows:
+                day, group_id, drift_q_bias, global_q_bias = r
+                base = base_qmin.get(group_id, 0.5)
+                effective_qmin = base + global_q_bias + drift_q_bias
+                series.append({"day": day, "group_id": group_id, "q_min": round(effective_qmin, 4)})
+        else:
+            # Old schema: current_q_min_mean is already the effective value
+            rows = conn.execute(
+                "SELECT day, group_id, current_q_min_mean "
+                "FROM _hidden_group_params_history ORDER BY day, group_id"
+            ).fetchall()
+            conn.close()
+            if not rows:
+                return []
+            series = [{"day": r[0], "group_id": r[1], "q_min": round(r[2], 4)} for r in rows]
+
         unique_days = sorted(set(s["day"] for s in series))
         if len(unique_days) > max_points:
             step = len(unique_days) // max_points

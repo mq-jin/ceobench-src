@@ -168,6 +168,12 @@ class Simulator:
         competitor_seed = int(rng.integers(0, 2**63))
         self._competitor_rng = Generator(PCG64(competitor_seed ^ 0x434F4D50))  # XOR with 'COMP' constant
 
+        # Separate RNG for competitor post noise — independent of _competitor_rng so that
+        # the noise sequence on post generation is identical across trajectories regardless
+        # of how many posts are generated (which may vary with agent actions).
+        comp_post_noise_seed = int(rng.integers(0, 2**63))
+        self._competitor_post_noise_rng = Generator(PCG64(comp_post_noise_seed ^ 0x4E4F4953))  # XOR with 'NOIS'
+
         # Separate RNG for quality improvement noise — ensures identical noise
         # sequence across agent strategies for cross-run comparability.
         quality_seed = int(rng.integers(0, 2**63))
@@ -392,6 +398,11 @@ class Simulator:
            Only affects existing subscribers' personal params.
            Multiplicative for c_max, steepness_left, seat_count. Additive for q_bias.
         """
+        # Grace period: no drift before drift_grace_period_days
+        grace = getattr(self.config, 'drift_grace_period_days', 0)
+        if grace > 0 and self.current_day <= grace:
+            return
+
         # Helper: compound daily rate over `days` periods
         def compound(daily_rate: float) -> float:
             if days == 1:
@@ -1734,9 +1745,8 @@ class Simulator:
                 rate = NETWORK_INFLUENCE_MATRIX.get(source_group_id, {}).get(group_id, 0.0)
                 if rate <= 0:
                     continue
-                # Sqrt-scaled network effect: sublinear, prevents runaway compounding
-                # sqrt(subs) balances meaningful network effects vs exponential blowup
-                network_leads += source_subs ** (1/2) * rate
+                # Linear network effect: leads scale directly with subscriber count
+                network_leads += source_subs * rate
 
             # === MARKET CAP SATURATION ===
             # Growth slows as subscribers approach market cap
@@ -4184,7 +4194,7 @@ class Simulator:
 
         # Dev spending improvement (logarithmic, always applied if spending)
         # 5× cost scaling: same quality boost as original but requires 5× more dollars
-        improvement = 0.001 * math.log(1 + spend_dev / 5000) if spend_dev > 0 else 0.0
+        improvement = 0.003 * math.log(1 + spend_dev / 5000) if spend_dev > 0 else 0.0
 
         new_q_shared = (
             q_shared + improvement
@@ -4198,7 +4208,7 @@ class Simulator:
             if spend > 0:
                 key = f'q_group_bonus_{group_id}'
                 current = get_global_state(self.conn, key, 0.0)
-                group_improvement = 0.005 * math.log(1 + spend / 5000)  # 5× cost scaling (original: spend/1000)
+                group_improvement = 0.015 * math.log(1 + spend / 5000)  # 3× boost, 5× cost scaling
                 set_global_state(self.conn, key, current + group_improvement)
 
     # =========================================================================
@@ -4225,9 +4235,9 @@ class Simulator:
             rt = RESEARCH_TIERS_BY_ID.get(tier_num)
             tier_name = rt.name if rt else f"Tier {tier_num}"
 
-            # Apply quality boost (8× multiplier)
+            # Apply quality boost (direct, no multiplier)
             current_q = get_global_state(self.conn, 'q_shared_bonus', 0.0)
-            new_q = current_q + quality_boost * 8.0
+            new_q = current_q + quality_boost
             set_global_state(self.conn, 'q_shared_bonus', new_q)
 
             # Mark completed
@@ -4697,6 +4707,11 @@ Requirements:
         2. Social media posts about the competitor product are generated for M days
         3. A notification is sent to the agent
         """
+        # Grace period: no competitor events before drift_grace_period_days
+        grace = getattr(self.config, 'drift_grace_period_days', 0)
+        if grace > 0 and self.current_day < grace:
+            return
+
         # Check days since last competitor event
         last_event = self.conn.execute("""
             SELECT MAX(start_day) as last_day FROM competitor_events
@@ -4707,12 +4722,13 @@ Requirements:
 
         days_since_last = self.current_day - last_event_day
 
-        # Half frequency in first year (day < 365): double intervals
+        # 2/3 frequency in first half of simulation: multiply intervals by 1.5
         mean_interval = self.config.competitor_event_mean_interval
         min_interval = self.config.competitor_event_min_interval
-        if self.current_day < 365:
-            mean_interval *= 2
-            min_interval *= 2
+        half_sim = max(self.config.total_days // 2, 1)
+        if self.current_day < half_sim:
+            mean_interval *= 1.5
+            min_interval *= 1.5
 
         # Only trigger if minimum interval has passed
         if days_since_last < min_interval:
@@ -4774,10 +4790,15 @@ Requirements:
         """Generate social media posts for active competitor events.
 
         These posts are independent of subscribers — they represent external market
-        buzz about competitor product launches. Uses template content, no LLM needed.
-        Posts are attributed to the market_observer pseudo-customer.
+        buzz about competitor product launches. Uses LLM (Haiku) when available,
+        falls back to templates. Posts are attributed to the market_observer pseudo-customer.
+
+        Each post receives the competitor event's quality boost with added noise
+        (from _competitor_post_noise_rng) so the LLM can calibrate the post's tone
+        and urgency to the actual magnitude. The noise RNG is independent of all
+        other RNGs, ensuring identical noise sequences across trajectories.
         """
-        from .database import add_social_media_post
+        from .database import add_social_media_post, get_world_context
 
         if not getattr(self, '_market_observer_id', None):
             return
@@ -4794,7 +4815,161 @@ Requirements:
         event = active_events[0]  # Use most recent event for context
         boost = event['boost_amount']
 
-        # Template pool — varied perspectives on competitor launches
+        # Add noise to boost for post generation (separate RNG for cross-trajectory consistency)
+        # Noise: additive, uniform in [-0.25*boost, +0.25*boost]
+        noise = float(self._competitor_post_noise_rng.uniform(-0.25, 0.25)) * boost
+        noisy_boost = max(0.0, boost + noise)
+
+        # Classify severity based on noisy boost
+        if noisy_boost < 0.03:
+            severity = 'minor'
+        elif noisy_boost < 0.10:
+            severity = 'moderate'
+        elif noisy_boost < 0.20:
+            severity = 'major'
+        else:
+            severity = 'transformative'
+
+        # Competitor names (selected by _competitor_rng for determinism)
+        competitor_names = ['RivalTech', 'NexGen Solutions', 'CloudPeak', 'QuantumEdge', 'ApexSaaS']
+
+        product_name = get_world_context(self.conn, 'product_name') or 'NovaMind'
+
+        # Perspective pool for varied post angles
+        perspectives = [
+            'industry analyst',
+            'tech journalist',
+            'SaaS market watcher',
+            'former employee of a competing company',
+            'venture capital analyst',
+            'product review blogger',
+            'enterprise buyer evaluating options',
+        ]
+
+        for i in range(posts_per_day):
+            competitor_name = competitor_names[int(self._competitor_rng.integers(0, len(competitor_names)))]
+            perspective = perspectives[int(self._competitor_rng.integers(0, len(perspectives)))]
+
+            # Try LLM generation first, fall back to templates
+            content = None
+            if self.customer_simulator:
+                try:
+                    content = self._generate_competitor_post_llm(
+                        competitor_name, noisy_boost, severity,
+                        event['description'], product_name, perspective
+                    )
+                except Exception as e:
+                    print(f"[WARN] Competitor post LLM generation failed: {e}")
+
+            if not content:
+                content = self._generate_competitor_post_template(
+                    competitor_name, severity
+                )
+
+            # Competitor posts are external market commentary — always neutral
+            sentiment = 'neutral'
+
+            # Views scale with severity
+            base_views = {'minor': 50, 'moderate': 200, 'major': 500, 'transformative': 1000}
+            views = int(base_views[severity] * (1 + self._competitor_rng.random()))
+            likes = int(views * 0.05 * (1 + self._competitor_rng.random()))
+            shares = int(views * 0.02 * (1 + self._competitor_rng.random()))
+
+            add_social_media_post(
+                self.conn, self.current_day, self._market_observer_id,
+                sentiment, content, likes=likes, shares=shares,
+                virality_score=0.0, reputation_impact=0.0, influence_score=0.0,
+            )
+
+    def _generate_competitor_post_llm(
+        self,
+        competitor_name: str,
+        noisy_boost: float,
+        severity: str,
+        event_description: str,
+        product_name: str,
+        perspective: str,
+    ) -> str:
+        """Generate a competitor event post using LLM (Haiku).
+
+        Args:
+            competitor_name: Name of the competitor
+            noisy_boost: Quality boost with noise applied (controls tone calibration)
+            severity: 'minor', 'moderate', 'major', or 'transformative'
+            event_description: Human-readable description of the event
+            product_name: The player's product name (for comparison context)
+            perspective: The author's perspective/role
+        """
+        severity_guidance = {
+            'minor': "This is a small, incremental improvement. Tone: measured, noting it but not alarmed.",
+            'moderate': "This is a meaningful upgrade that raises the bar. Tone: impressed, noting competitive pressure.",
+            'major': "This is a significant product overhaul. Tone: urgent, this changes market expectations.",
+            'transformative': "This is a market-redefining breakthrough. Tone: alarmed/excited, everyone must respond.",
+        }
+
+        system_prompt = f"""You are a {perspective} posting on social media about a competitor product launch in the SaaS/AI tools market.
+
+Competitor: {competitor_name}
+Event: {event_description}
+Your perceived quality boost: {noisy_boost:.4f}
+Severity level: {severity}
+
+{severity_guidance[severity]}
+
+This number ({noisy_boost:.4f}) is YOUR subjective perception of how much the competitor improved — based on your personal experience testing the product, reading early reviews, or talking to beta users. Different observers may perceive the improvement differently. You believe it to be a {noisy_boost:.4f} quality boost based on what you've seen.
+
+Context: {product_name} is an existing player in this space. The competitor's improvement puts pressure on {product_name} and similar tools.
+
+Guidelines:
+- Write a single, authentic social media post (1-3 sentences, under 100 words)
+- You MUST explicitly mention the quality boost number ({noisy_boost:.4f}) somewhere in your post, framed as your own estimate or perception — e.g. "from what I've seen, about a {noisy_boost:.4f} quality boost" or "I'd estimate a {noisy_boost:.4f} improvement" or "my testing suggests a {noisy_boost:.4f} bump"
+- Calibrate your reaction to the magnitude: {noisy_boost:.4f} is {'barely noticeable' if noisy_boost < 0.03 else 'notable' if noisy_boost < 0.10 else 'very significant' if noisy_boost < 0.20 else 'massive and market-changing'}
+- Vary your style — sometimes use hashtags, sometimes don't; sometimes tag companies, sometimes don't
+- Sound like a real person, not a press release
+- Output ONLY the post text, nothing else."""
+
+        user_prompt = f"Write a social media post reacting to {competitor_name}'s product launch."
+
+        social_model = self.customer_simulator.config.social_post_llm_model
+        social_temperature = self.customer_simulator.config.social_media_temperature
+
+        if self.customer_simulator.config.social_post_llm_provider == "bedrock":
+            response = self.customer_simulator.bedrock_client.messages.create(
+                model=social_model,
+                max_tokens=200,
+                temperature=social_temperature,
+                system=system_prompt,
+                messages=[{"role": "user", "content": user_prompt}],
+            )
+            post_text = response.content[0].text.strip()
+            self.customer_simulator._log_cost(
+                self.current_day, 'competitor_event_post',
+                response.usage.input_tokens, response.usage.output_tokens,
+                model=social_model
+            )
+        else:
+            response = self.customer_simulator.client.responses.create(
+                model=social_model,
+                reasoning={"effort": "low"},
+                input=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                max_output_tokens=200,
+            )
+            post_text = response.output_text.strip()
+            self.customer_simulator._log_cost(
+                self.current_day, 'competitor_event_post',
+                response.usage.input_tokens, response.usage.output_tokens,
+                model=social_model
+            )
+
+        return post_text
+
+    @staticmethod
+    def _generate_competitor_post_template(competitor_name: str, severity: str) -> str:
+        """Fallback template-based competitor post generation."""
+        import random as _random
         templates_by_severity = {
             'minor': [
                 "Interesting update from {competitor}. Nothing game-changing but shows they're still iterating.",
@@ -4825,38 +5000,9 @@ Requirements:
                 "Market disruption alert: {competitor}'s breakthrough launch sets a new standard. Everyone else is playing catch-up.",
             ],
         }
-
-        if boost < 0.03:
-            severity = 'minor'
-        elif boost < 0.10:
-            severity = 'moderate'
-        elif boost < 0.20:
-            severity = 'major'
-        else:
-            severity = 'transformative'
-
         templates = templates_by_severity[severity]
-        competitor_names = ['RivalTech', 'NexGen Solutions', 'CloudPeak', 'QuantumEdge', 'ApexSaaS']
-
-        for i in range(posts_per_day):
-            template = templates[int(self._competitor_rng.integers(0, len(templates)))]
-            competitor_name = competitor_names[int(self._competitor_rng.integers(0, len(competitor_names)))]
-            content = template.format(competitor=competitor_name)
-
-            # Competitor posts are external market commentary — always neutral
-            sentiment = 'neutral'
-
-            # Views scale with severity
-            base_views = {'minor': 50, 'moderate': 200, 'major': 500, 'transformative': 1000}
-            views = int(base_views[severity] * (1 + self._competitor_rng.random()))
-            likes = int(views * 0.05 * (1 + self._competitor_rng.random()))
-            shares = int(views * 0.02 * (1 + self._competitor_rng.random()))
-
-            add_social_media_post(
-                self.conn, self.current_day, self._market_observer_id,
-                sentiment, content, likes=likes, shares=shares,
-                virality_score=0.0, reputation_impact=0.0, influence_score=0.0,
-            )
+        template = _random.choice(templates)
+        return template.format(competitor=competitor_name)
 
     # =========================================================================
     # Enterprise Negotiation Processing

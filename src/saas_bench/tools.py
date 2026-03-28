@@ -1382,7 +1382,7 @@ TOOL_DOCS = {
             "error_funds": "Insufficient cash for tier cost"
         },
         "mechanics": {
-            "cost": "One-time cost deducted immediately. Tiers 1-10: $100K × tier. Tiers 11-20: super-linear ($1.5M to $15M).",
+            "cost": "One-time cost deducted immediately. Tiers 1-10: $250K to $2.5M. Tiers 11-20: $3.75M to $37.5M.",
             "duration": "Sampled from Normal(mean_days, std_days), minimum 30 days. Tiers 1-10: 35d-380d mean (~40-50% CV). Tiers 11-20: 420d-1400d mean (~55-80% CV).",
             "quality_boost": "Sampled from Normal(mean_quality, std_quality), minimum 0.001. Tiers 1-10: +0.04 to +0.85 mean (~50% CV). Tiers 11-20: +1.1 to +8.0 mean (~55-80% CV). Frontier tiers are cheaper per quality point but much riskier.",
             "repeatability": "Same tier can be started multiple times. Each invocation gets independent samples. Only one invocation per tier can be in-progress at a time.",

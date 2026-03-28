@@ -30,6 +30,15 @@ echo "Project dir: $PROJECT_DIR"
 echo "Public dir:  $PUBLIC_DIR"
 echo ""
 
+# 0. Purge stale bytecode (CRITICAL for editable/src installs)
+# uv sync --reinstall-package does NOT clear .pyc files. Python may load
+# old compiled bytecode instead of recompiling from updated .py sources.
+echo "🧹 Purging __pycache__ bytecode..."
+find "$PROJECT_DIR/src" -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
+find "$PROJECT_DIR/src" -name "*.pyc" -delete 2>/dev/null || true
+echo "✅ Bytecode cache cleared"
+echo ""
+
 # 1. Generate documentation
 echo "📝 Generating documentation..."
 cd "$PROJECT_DIR"
@@ -157,7 +166,6 @@ sessions/
 
 # Python
 __pycache__/
-*.pyc
 *.pyo
 .venv/
 

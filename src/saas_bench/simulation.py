@@ -5718,6 +5718,8 @@ Guidelines:
                    c.steepness_left as initial_steepness_left, c.steepness_right as initial_steepness_right,
                    c.c_max as initial_c_max,
                    cs.current_steepness_left, cs.current_steepness_right, cs.current_c_max, cs.relationship,
+                   cs.open_issue_days,
+                   c.usage_demand, c.ads_quality_sensitivity,
                    s.plan, s.listed_price, s.start_day,
                    s.contract_months, s.contract_end_day
             FROM customers c
@@ -5762,11 +5764,45 @@ Guidelines:
                 or (contract_end_day - self.current_day) <= pre_expiry_days
             )
 
-            # Get current perceived quality using cached q_shared (avoids per-customer DB query)
+            # Get current perceived quality — include ALL terms that affect daily satisfaction
+            plan = ent['plan']
+            group_id = ent['group_id']
             relationship = ent['relationship'] or 0.5
             rel_bonus = self.config.relationship_quality_bonus_max * (relationship - 0.5) * 2
-            q_shared = self._cached_q_shared_per_plan.get(ent['plan'], 0.5)
-            quality = q_shared + rel_bonus
+
+            q_shared = self._cached_q_shared_per_plan.get(plan, 0.5)
+            # Add per-group quality bonus (from R&D investments) × tier multiplier
+            if self._cached_q_group_bonus and group_id in self._cached_q_group_bonus:
+                q_shared += self._cached_q_group_bonus[group_id] * self._cached_tier_multiplier_per_plan.get(plan, 1.0)
+
+            # Stickiness bonus (loyalty from tenure)
+            days_subscribed = self.current_day - ent['start_day'] if ent['start_day'] else 0
+            stickiness_bonus = self.config.stickiness_log_scale * math.log(1 + days_subscribed / 30) if days_subscribed > 0 else 0.0
+
+            # Issue penalty (unresolved support tickets)
+            issue_penalty = 0.03 * (ent['open_issue_days'] or 0)
+
+            # Quota penalty
+            usage_demand = ent['usage_demand'] or 50.0
+            seat_count = int(ent['seat_count'] or 1)
+            total_demand = usage_demand * seat_count
+            plan_quota = config.get(f'quota_{plan}', 100) if config else 100
+            quota_penalty = 0.0
+            if total_demand > plan_quota:
+                quota_penalty = self.config.quota_dissatisfaction_scale * (1.0 - plan_quota / total_demand)
+
+            # Ads penalty
+            ads_sensitivity = ent['ads_quality_sensitivity'] or 0.0
+            ads_penalty = 0.0
+            if ads_sensitivity > 0:
+                ads_global = self.config.ads_strength_global
+                ads_group = self.config.ads_strength_by_group.get(group_id, 0.0)
+                strength = min(max(ads_global + ads_group, 0.0), 1.0)
+                if strength > 0:
+                    effective_ads = math.log(1.0 + 9.0 * strength) / math.log(10.0)
+                    ads_penalty = ads_sensitivity * effective_ads
+
+            quality = q_shared + rel_bonus + stickiness_bonus - issue_penalty - quota_penalty - ads_penalty
 
             # Get asymmetric sigmoid params (use drifted values + drift offsets)
             steepness_left = ent['current_steepness_left'] or ent['initial_steepness_left']
@@ -5825,6 +5861,23 @@ Guidelines:
         best_satisfaction = current_satisfaction
         best_quality = current_quality
 
+        # Pre-compute per-customer terms that don't change across plans
+        relationship = ent['relationship'] or 0.5
+        rel_bonus = self.config.relationship_quality_bonus_max * (relationship - 0.5) * 2
+        days_subscribed = self.current_day - ent['start_day'] if ent['start_day'] else 0
+        stickiness_bonus = self.config.stickiness_log_scale * math.log(1 + days_subscribed / 30) if days_subscribed > 0 else 0.0
+        issue_penalty = 0.03 * (ent['open_issue_days'] or 0)
+        ads_sensitivity = ent['ads_quality_sensitivity'] or 0.0
+        ads_penalty = 0.0
+        if ads_sensitivity > 0:
+            group_id = ent['group_id']
+            ads_global = self.config.ads_strength_global
+            ads_group = self.config.ads_strength_by_group.get(group_id, 0.0)
+            strength = min(max(ads_global + ads_group, 0.0), 1.0)
+            if strength > 0:
+                effective_ads = math.log(1.0 + 9.0 * strength) / math.log(10.0)
+                ads_penalty = ads_sensitivity * effective_ads
+
         for plan in ['A', 'B', 'C']:
             if plan == current_plan:
                 continue
@@ -5836,11 +5889,20 @@ Guidelines:
             if list_price > c_max:
                 continue
 
-            # Get perceived quality using cached q_shared (avoids per-customer DB query)
+            # Get perceived quality using ALL terms (matches daily satisfaction computation)
             q_shared = self._cached_q_shared_per_plan.get(plan, 0.5)
-            relationship = ent['relationship'] or 0.5
-            rel_bonus = self.config.relationship_quality_bonus_max * (relationship - 0.5) * 2
-            quality = q_shared + rel_bonus
+            # Add per-group quality bonus (from R&D investments) × tier multiplier
+            group_id_pc = ent['group_id']
+            if self._cached_q_group_bonus and group_id_pc in self._cached_q_group_bonus:
+                q_shared += self._cached_q_group_bonus[group_id_pc] * self._cached_tier_multiplier_per_plan.get(plan, 1.0)
+            usage_demand = ent['usage_demand'] or 50.0
+            seat_count = int(ent['seat_count'] or 1)
+            total_demand = usage_demand * seat_count
+            plan_quota = config.get(f'quota_{plan}', 100) if config else 100
+            quota_penalty = 0.0
+            if total_demand > plan_quota:
+                quota_penalty = self.config.quota_dissatisfaction_scale * (1.0 - plan_quota / total_demand)
+            quality = q_shared + rel_bonus + stickiness_bonus - issue_penalty - quota_penalty - ads_penalty
             satisfaction = self._compute_satisfaction(steepness_left, steepness_right, c_max, quality, list_price, q_max, q_min)
 
             # Check participation constraint (satisfaction > 0 means acceptable)

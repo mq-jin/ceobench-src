@@ -955,7 +955,8 @@ def get_qualities_for_all_plans_batch(
 ) -> Dict[int, Dict[str, float]]:
     """Batch-fetch perceived quality for all plans for multiple customers.
 
-    Pre-computes plan-level delivered quality once, then batch-fetches customer data.
+    Includes ALL terms that affect daily satisfaction: relationship bonus,
+    stickiness bonus, issue penalty, quota penalty, and ads penalty.
     Returns dict mapping customer_id -> {plan -> perceived_quality}.
     """
     if not customer_ids:
@@ -975,21 +976,48 @@ def get_qualities_for_all_plans_batch(
     product_quality = config.base_product_quality + q_shared_bonus
 
     delivered_per_plan = {}
+    tier_multipliers = {}
+    plan_quotas = {}
     for plan in ['A', 'B', 'C']:
         tier = cfg[f'tier_{plan}']
         tier_multiplier = MODEL_TIERS[tier].quality_multiplier
         delivered_per_plan[plan] = product_quality * tier_multiplier
+        tier_multipliers[plan] = tier_multiplier
+        plan_quotas[plan] = cfg[f'quota_{plan}'] if f'quota_{plan}' in cfg.keys() else 100
 
-    # Batch-fetch customer relationship
+    # Load per-group quality bonuses (from R&D investments)
+    q_group_bonus = {}
+    for row in conn.execute(
+        "SELECT key, value FROM global_state WHERE key LIKE 'q_group_bonus_%'"
+    ).fetchall():
+        gid = row['key'][len('q_group_bonus_'):]
+        q_group_bonus[gid] = float(row['value'])
+
+    # Get current day for stickiness calculation
+    day_row = conn.execute("SELECT value FROM global_state WHERE key = 'current_day'").fetchone()
+    current_day = int(float(day_row['value'])) if day_row else 0
+
+    # Batch-fetch customer data (relationship, open_issue_days, subscription start_day, etc.)
     placeholders = ','.join('?' * len(customer_ids))
     rows = conn.execute(f"""
-        SELECT cs.customer_id, cs.relationship
+        SELECT cs.customer_id, cs.relationship, cs.open_issue_days,
+               c.usage_demand, c.seat_count, c.ads_quality_sensitivity, c.group_id,
+               s.start_day
         FROM customer_state cs
+        JOIN customers c ON cs.customer_id = c.customer_id
+        LEFT JOIN subscriptions s ON c.customer_id = s.customer_id
+            AND s.status = 'subscribed' AND s.end_day IS NULL
         WHERE cs.customer_id IN ({placeholders})
     """, customer_ids).fetchall()
 
     customer_data = {row['customer_id']: row for row in rows}
     rel_bonus_max = config.relationship_quality_bonus_max
+    stickiness_log_scale = config.stickiness_log_scale
+    quota_dissat_scale = config.quota_dissatisfaction_scale
+
+    # Pre-compute ads strength per group
+    ads_global = config.ads_strength_global
+    ads_by_group = config.ads_strength_by_group
 
     result = {}
     for cid in customer_ids:
@@ -998,9 +1026,42 @@ def get_qualities_for_all_plans_batch(
         for plan in ['A', 'B', 'C']:
             dq = delivered_per_plan[plan]
             if cust:
+                # Add per-group quality bonus (from R&D investments) × tier multiplier
+                cust_group_id = cust['group_id'] or 'E1'
+                if cust_group_id in q_group_bonus:
+                    dq += q_group_bonus[cust_group_id] * tier_multipliers.get(plan, 1.0)
+                # Relationship bonus
                 rel = cust['relationship'] or 0.5
                 rel_bonus = rel_bonus_max * (rel - 0.5) * 2
-                q_perceived = dq + rel_bonus
+
+                # Stickiness bonus (tenure loyalty)
+                start_day = cust['start_day']
+                days_subscribed = current_day - start_day if start_day is not None else 0
+                stickiness_bonus = stickiness_log_scale * math.log(1 + days_subscribed / 30) if days_subscribed > 0 else 0.0
+
+                # Issue penalty
+                issue_penalty = 0.03 * (cust['open_issue_days'] or 0)
+
+                # Quota penalty (plan-specific)
+                usage_demand = cust['usage_demand'] or 50.0
+                seat_count = int(cust['seat_count'] or 1)
+                total_demand = usage_demand * seat_count
+                plan_quota = plan_quotas[plan]
+                quota_penalty = 0.0
+                if plan_quota > 0 and total_demand > plan_quota:
+                    quota_penalty = quota_dissat_scale * (1.0 - plan_quota / total_demand)
+
+                # Ads penalty
+                ads_sensitivity = cust['ads_quality_sensitivity'] or 0.0
+                ads_penalty = 0.0
+                if ads_sensitivity > 0:
+                    group_id = cust['group_id'] or 'E1'
+                    strength = min(max(ads_global + ads_by_group.get(group_id, 0.0), 0.0), 1.0)
+                    if strength > 0:
+                        effective_ads = math.log(1.0 + 9.0 * strength) / math.log(10.0)
+                        ads_penalty = ads_sensitivity * effective_ads
+
+                q_perceived = dq + rel_bonus + stickiness_bonus - issue_penalty - quota_penalty - ads_penalty
                 qualities[plan] = min(1.0, max(-1.0, q_perceived))
             else:
                 qualities[plan] = dq

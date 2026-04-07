@@ -2441,7 +2441,7 @@ class Simulator:
         # This result is also returned for reuse by _process_issues (L5 shared fetch).
         subscribers = self.conn.execute("""
             SELECT s.customer_id, s.plan, s.listed_price, s.effective_price, s.effective_c_max,
-                   s.start_day,
+                   s.start_day, s.daily_usage_rate,
                    cs.satisfaction, cs.open_issue_days,
                    cs.current_steepness_left, cs.current_steepness_right, cs.current_c_max,
                    c.steepness_left, c.steepness_right, c.c_max,
@@ -2567,9 +2567,8 @@ class Simulator:
             days_subscribed = _current_day - sub['start_day']
             stickiness_bonus = _stickiness_log_scale * _math_log(1 + days_subscribed / 30) if days_subscribed > 0 else 0.0
 
-            usage_demand = sub['usage_demand'] or 50.0
-            seat_count = int(sub['seat_count'] or 1)
-            total_demand = usage_demand * seat_count
+            daily_usage_rate = sub['daily_usage_rate'] if sub['daily_usage_rate'] else 0.0
+            total_demand = daily_usage_rate * 30  # projected monthly usage from actual sampled rate
             plan_quota = _plan_quotas[plan]
             quota_penalty = 0.0
             if total_demand > plan_quota:
@@ -5738,7 +5737,7 @@ Guidelines:
                    cs.current_steepness_left, cs.current_steepness_right, cs.current_c_max, cs.relationship,
                    cs.open_issue_days,
                    c.usage_demand, c.ads_quality_sensitivity,
-                   s.plan, s.listed_price, s.start_day,
+                   s.plan, s.listed_price, s.start_day, s.daily_usage_rate,
                    s.contract_months, s.contract_end_day
             FROM customers c
             JOIN customer_state cs ON c.customer_id = cs.customer_id
@@ -5800,10 +5799,9 @@ Guidelines:
             # Issue penalty (unresolved support tickets)
             issue_penalty = 0.03 * (ent['open_issue_days'] or 0)
 
-            # Quota penalty
-            usage_demand = ent['usage_demand'] or 50.0
-            seat_count = int(ent['seat_count'] or 1)
-            total_demand = usage_demand * seat_count
+            # Quota penalty (use actual sampled daily_usage_rate, consistent with satisfaction loop)
+            daily_usage_rate = ent['daily_usage_rate'] if ent['daily_usage_rate'] else 0.0
+            total_demand = daily_usage_rate * 30
             plan_quota = config.get(f'quota_{plan}', 100) if config else 100
             quota_penalty = 0.0
             if total_demand > plan_quota:
@@ -5913,9 +5911,8 @@ Guidelines:
             group_id_pc = ent['group_id']
             if self._cached_q_group_bonus and group_id_pc in self._cached_q_group_bonus:
                 q_shared += self._cached_q_group_bonus[group_id_pc] * self._cached_tier_multiplier_per_plan.get(plan, 1.0)
-            usage_demand = ent['usage_demand'] or 50.0
-            seat_count = int(ent['seat_count'] or 1)
-            total_demand = usage_demand * seat_count
+            daily_usage_rate_pc = ent['daily_usage_rate'] if ent['daily_usage_rate'] else 0.0
+            total_demand = daily_usage_rate_pc * 30
             plan_quota = config.get(f'quota_{plan}', 100) if config else 100
             quota_penalty = 0.0
             if total_demand > plan_quota:

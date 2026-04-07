@@ -1002,7 +1002,7 @@ def get_qualities_for_all_plans_batch(
     rows = conn.execute(f"""
         SELECT cs.customer_id, cs.relationship, cs.open_issue_days,
                c.usage_demand, c.seat_count, c.ads_quality_sensitivity, c.group_id,
-               s.start_day
+               s.start_day, s.daily_usage_rate
         FROM customer_state cs
         JOIN customers c ON cs.customer_id = c.customer_id
         LEFT JOIN subscriptions s ON c.customer_id = s.customer_id
@@ -1042,10 +1042,9 @@ def get_qualities_for_all_plans_batch(
                 # Issue penalty
                 issue_penalty = 0.03 * (cust['open_issue_days'] or 0)
 
-                # Quota penalty (plan-specific)
-                usage_demand = cust['usage_demand'] or 50.0
-                seat_count = int(cust['seat_count'] or 1)
-                total_demand = usage_demand * seat_count
+                # Quota penalty (use actual sampled daily_usage_rate, consistent with satisfaction)
+                daily_usage_rate = cust['daily_usage_rate'] if cust['daily_usage_rate'] else 0.0
+                total_demand = daily_usage_rate * 30
                 plan_quota = plan_quotas[plan]
                 quota_penalty = 0.0
                 if plan_quota > 0 and total_demand > plan_quota:

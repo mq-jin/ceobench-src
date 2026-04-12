@@ -49,7 +49,7 @@ class BashAgent(BaseAgent):
         client,
         model: str = "gpt-4o",
         system_prompt: Optional[str] = None,
-        max_turns_per_day: int = 100,
+        max_turns_per_day: int = 0,  # 0 = no limit
         response_callback: Optional[callable] = None,
         reasoning_effort: Optional[str] = None,
         tool_result_callback: Optional[callable] = None,
@@ -229,8 +229,8 @@ class BashAgent(BaseAgent):
             self.current_day = current_day
             self.turns_today = 0
 
-        # Safety: force next_week if too many turns
-        if self.turns_today >= self.max_turns_per_day:
+        # Safety: force next_week if too many turns (0 = no limit)
+        if self.max_turns_per_day > 0 and self.turns_today >= self.max_turns_per_day:
             return Action(tool='bash', arguments={'command': './novamind-operation next-week'})
 
         # If we have pending tool call results to process, add them

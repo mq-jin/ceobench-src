@@ -341,7 +341,7 @@ class BaselineRunner:
             tool_descriptions=tool_descriptions,
             client=self.client,
             model=self.model,
-            max_turns_per_day=100,
+            max_turns_per_day=0,  # No limit
             response_callback=self._log_response,
             reasoning_effort=self.reasoning_effort,
             tool_result_callback=self._log_tool_result,

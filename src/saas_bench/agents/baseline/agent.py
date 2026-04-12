@@ -43,7 +43,7 @@ class BaselineAgent(BaseAgent):
         client,  # OpenAI or anthropic.Anthropic or AnthropicBedrock
         model: str = "gpt-4o",
         system_prompt: Optional[str] = None,
-        max_turns_per_day: int = 100,
+        max_turns_per_day: int = 0,  # 0 = no limit
         response_callback: Optional[callable] = None,
         reasoning_effort: Optional[str] = None,
         tool_result_callback: Optional[callable] = None,
@@ -55,7 +55,7 @@ class BaselineAgent(BaseAgent):
             client: API client (OpenAI, Anthropic, or AnthropicBedrock)
             model: Model to use (default gpt-4o)
             system_prompt: Custom system prompt (uses default if None)
-            max_turns_per_day: Max tool calls per week before forcing next_week
+            max_turns_per_day: Max tool calls per week before forcing next_week (0 = no limit)
             response_callback: Optional callback for logging raw responses
             reasoning_effort: Reasoning effort level for GPT-5.2+ (none, low, medium, high, xhigh)
             tool_result_callback: Optional callback for logging tool results (turn, day, tool_name, args, result)
@@ -159,8 +159,8 @@ class BaselineAgent(BaseAgent):
             self.current_day = current_day
             self.turns_today = 0
 
-        # Safety: force next_week if too many turns
-        if self.turns_today >= self.max_turns_per_day:
+        # Safety: force next_week if too many turns (0 = no limit)
+        if self.max_turns_per_day > 0 and self.turns_today >= self.max_turns_per_day:
             return Action(tool='next_week')
 
         # If we have pending tool call results to process, add them

@@ -49,11 +49,8 @@ def _open_run_db(run_dir: Path) -> sqlite3.Connection | None:
 
 # Run registry
 RUN_REGISTRY = {
-    "e9f396b5": {"label": "GLM-5 v3.2u run 1", "model": "GLM-5-FP8", "seed": 42, "days": 500},
-    "fa20a32e": {"label": "GLM-5 v3.2u run 2", "model": "GLM-5-FP8", "seed": 42, "days": 500},
-    "eea59420": {"label": "GLM-5 v3.2u run 3", "model": "GLM-5-FP8", "seed": 42, "days": 500},
-    "10d45726": {"label": "GLM-5 v3.2u run 4", "model": "GLM-5-FP8", "seed": 42, "days": 500},
-    "0b13b588": {"label": "GLM-5 v3.2u run 5", "model": "GLM-5-FP8", "seed": 42, "days": 500},
+    "dd0b1bf5": {"label": "GPT-5.4 xhigh v3.3a", "model": "gpt-5.4", "seed": 42, "days": 500},
+    "339b9cff": {"label": "GLM-5.1-FP8 v3.3a", "model": "GLM-5.1-FP8", "seed": 42, "days": 500},
 }
 
 

@@ -562,7 +562,7 @@ class BenchmarkConfig:
     competitor_event_magnitude_scale_max: float = 6.0   # Scale at total_days (was 4.0)
 
     # Grace period: no drift or competitor events for the first N days
-    drift_grace_period_days: int = 60  # No global/group/individual drift or competitor events before this day
+    drift_grace_period_days: int = 100  # No global/group/individual drift or competitor events before this day
 
     # Issue generation
     # Reality-matched: Average SaaS products see 5-15% MAU monthly ticket rates

@@ -187,3 +187,21 @@ Daily costs: capacity tier + compute (usage × tier cost) + advertising + operat
 You can call any tool any number of times within a week. Advance to the next week when you are ready.
 
 **NOTE:** The `next_week` call may take a long time (several minutes) at large subscriber counts. The simulator processes billing, churn, usage, reputation, and other mechanics for every customer individually across 7 simulated days. This is normal and expected — just wait for the response. Do not assume the call has failed or timed out.
+
+## Weekly Cash Predictions (MANDATORY)
+
+Before advancing to the next week, you **MUST** submit three cash predictions. The `next-week` command takes three positional arguments in this exact order:
+
+```
+./novamind-operation next-week <cash_1wk> <cash_4wk> <cash_12wk>
+```
+
+- `cash_1wk` — your predicted cash on hand **7 simulated days** from the current day (i.e. at the end of the week you are about to advance into).
+- `cash_4wk` — your predicted cash on hand **28 simulated days** from the current day.
+- `cash_12wk` — your predicted cash on hand **84 simulated days** from the current day.
+
+All three values are required numbers (dollars, e.g. `1250000.0`). There is no way to skip or pass a null; the call will fail with a 400 error if any are missing or non-numeric.
+
+**You will be evaluated on the accuracy of these predictions at each horizon.** The benchmark scores percent error `(predicted − actual) / actual` at every horizon and tracks prediction accuracy over time alongside standard business metrics. Good prediction accuracy is a signal that you understand the simulator's dynamics (growth, churn, cost structure, seasonality, competitor events). Poor prediction accuracy — even with strong nominal cash performance — indicates the decisions driving your cash were not grounded in an accurate internal model of the world.
+
+Predictions are stored at submission time; updating them later is not possible. Plan your forecast before you advance.

@@ -310,6 +310,104 @@ def get_discovered_group_ids(run_dir: Path) -> set:
         return set()
 
 
+def get_prediction_accuracy_series(run_dir: Path, max_points: int = 300) -> list:
+    """Prediction accuracy series for cash predictions.
+
+    Joins the ``predictions`` table with per-day cash (cumulative ledger sum)
+    to compute percent error for every prediction whose target day has been
+    reached. Returns a flat list of rows keyed by (submit_day, horizon_days):
+
+        {
+            "submit_day": int,        # day prediction was made
+            "target_day": int,        # submit_day + horizon_days
+            "horizon_days": int,      # 7, 28, or 84
+            "predicted_value": float, # dollars
+            "actual_value": float,    # dollars (cumulative ledger at target_day)
+            "pct_diff": float,        # (predicted - actual) / actual * 100
+        }
+
+    Rows are sorted by submit_day, then horizon_days. Rows whose target day
+    has not yet been reached in the sim are omitted (they cannot be scored).
+    """
+    conn = _open_run_db(run_dir)
+    if not conn:
+        return []
+    try:
+        # Does the table exist? (Older runs may not have it.)
+        has_pred = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='predictions'"
+        ).fetchone()
+        if not has_pred:
+            conn.close()
+            return []
+
+        preds = conn.execute("""
+            SELECT submit_day, horizon_days, metric, predicted_value
+            FROM predictions
+            WHERE metric = 'cash'
+            ORDER BY submit_day, horizon_days
+        """).fetchall()
+        if not preds:
+            conn.close()
+            return []
+
+        max_day_row = conn.execute("SELECT MAX(day) FROM ledger").fetchone()
+        max_day = (max_day_row[0] if max_day_row and max_day_row[0] is not None else 0)
+
+        # Pre-aggregate ledger by day, then build cumulative cash(day) lookup.
+        ledger_rows = conn.execute(
+            "SELECT day, SUM(amount) FROM ledger GROUP BY day ORDER BY day"
+        ).fetchall()
+        conn.close()
+
+        cum_by_day = {}
+        running = 0.0
+        for day, amt in ledger_rows:
+            running += (amt or 0.0)
+            cum_by_day[day] = running
+
+        # Forward-fill: cash on days with no ledger activity = last known cash.
+        cash_on_day = {}
+        if ledger_rows:
+            min_day = ledger_rows[0][0]
+            running = 0.0
+            for d in range(min_day, max_day + 1):
+                if d in cum_by_day:
+                    running = cum_by_day[d]
+                cash_on_day[d] = running
+
+        series = []
+        for submit_day, horizon_days, _metric, predicted_value in preds:
+            target_day = submit_day + horizon_days
+            if target_day > max_day:
+                continue  # can't score yet
+            actual = cash_on_day.get(target_day)
+            if actual is None:
+                continue
+            # Percent diff — guard tiny/zero actuals by using max(|actual|, 1).
+            denom = abs(actual) if abs(actual) > 1.0 else 1.0
+            pct = (predicted_value - actual) / denom * 100.0
+            series.append({
+                "submit_day": int(submit_day),
+                "target_day": int(target_day),
+                "horizon_days": int(horizon_days),
+                "predicted_value": round(float(predicted_value), 2),
+                "actual_value": round(float(actual), 2),
+                "pct_diff": round(pct, 3),
+            })
+
+        if len(series) > max_points:
+            step = len(series) // max_points
+            series = [s for i, s in enumerate(series) if i % step == 0 or i == len(series) - 1]
+        return series
+    except Exception:
+        try:
+            conn.close()
+        except Exception:
+            pass
+        return []
+
+
 def get_seat_series_from_db(run_dir: Path, max_points: int = 200) -> list:
     """Individual subs + enterprise seats per day from _hidden_group_params_history days."""
     conn = _open_run_db(run_dir)
@@ -692,6 +790,9 @@ def get_run_data(run_id: str) -> dict:
     # Founder dividends from SQLite DB (small table, quick query)
     data["founder_dividends"] = get_founder_dividends_from_db(run_dir)
     data["dividend_series"] = get_dividend_series_from_db(run_dir)
+
+    # Cash prediction accuracy per horizon (1wk / 4wk / 12wk)
+    data["prediction_accuracy_series"] = get_prediction_accuracy_series(run_dir)
 
     # Monthly profit series (30-day rolling windows)
     profit_series = get_profit_series_from_db(run_dir)

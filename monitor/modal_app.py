@@ -175,6 +175,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
       <div class="chart-box"><h3>Founder Dividends (Cumulative)</h3><canvas id="divChart"></canvas></div>
       <div class="chart-box"><h3>Monthly Profit (30-day windows)</h3><canvas id="profitChart"></canvas></div>
     </div>
+    <!-- Cash prediction % error (1wk / 4wk / 12wk on one plot) -->
+    <div class="charts">
+      <div class="chart-box" style="grid-column:1/-1"><h3>Cash Prediction % Error by Horizon (1wk / 4wk / 12wk)</h3><canvas id="predictionChart" style="max-height:280px"></canvas></div>
+    </div>
     <!-- Timing -->
     <div class="charts">
       <div class="chart-box" id="timingChartBox"><h3>Day Time Breakdown (s)</h3><canvas id="timingChart"></canvas></div>
@@ -413,6 +417,20 @@ function renderNewCharts(r){
     var sampled=ds.filter(function(_,i){return i%step===0||i===ds.length-1});
     charts.timing=new Chart($('#timingChart').getContext('2d'),{type:'bar',options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{labels:{color:'#8b949e',font:{size:10}}}},scales:{x:{stacked:true,grid:{color:'#21262d'},ticks:{color:'#8b949e',font:{size:9}}},y:{stacked:true,grid:{color:'#21262d'},ticks:{color:'#8b949e',font:{size:10}}}},elements:{bar:{borderRadius:1}}},data:{labels:sampled.map(function(d){return d.day}),datasets:[{label:'LLM',data:sampled.map(function(d){return d.llm_total_s||0}),backgroundColor:'rgba(88,166,255,0.7)'},{label:'step_day',data:sampled.map(function(d){return d.step_day_s||0}),backgroundColor:'rgba(240,136,62,0.7)'},{label:'tools',data:sampled.map(function(d){return d.tool_total_s||0}),backgroundColor:'rgba(188,140,255,0.7)'}]}});
   }
+  // Cash prediction % error (1wk / 4wk / 12wk) on one plot — x-axis = target_day
+  var predData=r.prediction_accuracy_series||[];
+  if(charts.prediction)charts.prediction.destroy();
+  if(predData.length){
+    var horizonMeta={7:{label:'1wk (+7d)',color:'#58a6ff'},28:{label:'4wk (+28d)',color:'#d29922'},84:{label:'12wk (+84d)',color:'#bc8cff'}};
+    var allDays=[...new Set(predData.map(function(d){return d.target_day}))].sort(function(a,b){return a-b});
+    var predDatasets=[7,28,84].map(function(h){
+      var rows=predData.filter(function(d){return d.horizon_days===h});
+      var byDay={};rows.forEach(function(d){byDay[d.target_day]=d.pct_diff});
+      return{label:horizonMeta[h].label,data:allDays.map(function(d){return d in byDay?byDay[d]:null}),borderColor:horizonMeta[h].color,backgroundColor:horizonMeta[h].color+'22',borderWidth:2,fill:false,pointRadius:2,spanGaps:true};
+    });
+    charts.prediction=new Chart($('#predictionChart').getContext('2d'),{type:'line',options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{labels:{color:'#8b949e',font:{size:10}}},tooltip:{callbacks:{title:function(items){return'Target day '+items[0].label},label:function(ctx){return ctx.dataset.label+': '+(ctx.parsed.y==null?'\u2014':ctx.parsed.y.toFixed(1)+'%')}}}},scales:{x:{title:{display:true,text:'Target day (day when actual cash was measured)',color:'#8b949e',font:{size:10}},grid:{color:'#21262d'},ticks:{color:'#8b949e',font:{size:10}}},y:{title:{display:true,text:'% error: (predicted − actual) / |actual| × 100',color:'#8b949e',font:{size:10}},grid:{color:'#21262d'},ticks:{color:'#8b949e',font:{size:10},callback:function(v){return v.toFixed(0)+'%'}}}},elements:{line:{borderWidth:2}}},data:{labels:allDays,datasets:predDatasets}});
+  }
+
   // Cumulative timing bars
   var tl=r.timing_total_llm||0,ts=r.timing_total_step||0,tt=r.timing_total_tool||0;
   var tot=tl+ts+tt;

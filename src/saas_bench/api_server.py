@@ -367,10 +367,42 @@ class _APIHandler(BaseHTTPRequestHandler):
             self._send_json({"success": False, "error": str(e), "traceback": traceback.format_exc()}, 500)
 
     def _handle_next_week(self):
-        """Handle next-week advancement: POST /next-week."""
+        """Handle next-week advancement: POST /next-week.
+
+        Body must contain ``predictions.cash_1wk``, ``predictions.cash_4wk``,
+        ``predictions.cash_12wk`` (numeric). Missing or non-numeric predictions
+        return 400.
+        """
         try:
             server: NovaMindAPIServer = self.server._api_server
-            result = server.advance_week()
+            body = self._read_body() or {}
+            preds_raw = body.get("predictions")
+            if not isinstance(preds_raw, dict):
+                self._send_json({
+                    "success": False,
+                    "error": "Missing 'predictions' object. Required keys: cash_1wk, cash_4wk, cash_12wk.",
+                }, 400)
+                return
+
+            horizon_map = {"cash_1wk": 7, "cash_4wk": 28, "cash_12wk": 84}
+            parsed = {}
+            for key, horizon in horizon_map.items():
+                if key not in preds_raw:
+                    self._send_json({
+                        "success": False,
+                        "error": f"Missing prediction '{key}'. All three required: cash_1wk, cash_4wk, cash_12wk.",
+                    }, 400)
+                    return
+                try:
+                    parsed[horizon] = {"cash": float(preds_raw[key])}
+                except (TypeError, ValueError):
+                    self._send_json({
+                        "success": False,
+                        "error": f"Prediction '{key}' must be a number, got {preds_raw[key]!r}.",
+                    }, 400)
+                    return
+
+            result = server.advance_week(predictions=parsed)
             self._send_json(result)
         except Exception as e:
             import traceback
@@ -653,7 +685,7 @@ class NovaMindAPIServer:
     # Maximum allowed time for step_week before auto-quit (seconds)
     STEP_WEEK_TIMEOUT = 4200  # 7× longer than old per-day timeout
 
-    def advance_week(self) -> Dict[str, Any]:
+    def advance_week(self, predictions: Optional[Dict[int, Dict[str, float]]] = None) -> Dict[str, Any]:
         """Advance the simulator by one week (7 days) and return the dashboard.
 
         Enforces a hard timeout (STEP_WEEK_TIMEOUT seconds) on step_week().
@@ -661,6 +693,10 @@ class NovaMindAPIServer:
 
         If a shock_manager is configured, shocks are checked before step_week
         and inbox items are included in the dashboard.
+
+        ``predictions`` (optional): maps horizon_days -> {metric: value}. Saved
+        to the ``predictions`` table before advancing. Used by the prediction
+        benchmark component.
         """
         import time as _time
         from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
@@ -669,6 +705,18 @@ class NovaMindAPIServer:
             if self.simulator is None:
                 return {"success": False, "error": "No simulator configured"}
             old_day = self.tools.current_day
+
+        # Persist predictions before stepping the world (so submit_day reflects
+        # the day the prediction was made, not the post-step day).
+        if predictions and self.conn is not None:
+            from saas_bench.database import save_predictions as _save_predictions
+            try:
+                with self._lock:
+                    _save_predictions(self.conn, old_day, predictions, _time.time())
+                    self.conn.commit()
+            except Exception:
+                import traceback
+                traceback.print_exc()
 
         # Check for shocks BEFORE step_week (so shock effects apply this week)
         if self.shock_manager:

@@ -229,14 +229,21 @@ novamind-operation stop
 
 ### Simulation Control
 
-#### `novamind-operation next-day [--session ID]`
-Advance the simulation by one day. Prints the daily dashboard with key metrics.
+#### `novamind-operation next-week <cash_1wk> <cash_4wk> <cash_12wk> [--session ID]`
+Advance the simulation by one week (7 days). **Requires 3 cash predictions** as positional arguments — all three are mandatory, numeric (dollars).
 
 ```bash
-novamind-operation next-day
+novamind-operation next-week 1050000 1200000 1800000
 ```
 
-**Output:** The daily dashboard showing cash, subscribers, MRR, yesterday's metrics, current config, product quality, and inbox notifications.
+**Arguments:**
+- `cash_1wk`: Predicted cash 1 week from today (+7 days)
+- `cash_4wk`: Predicted cash 4 weeks from today (+28 days)
+- `cash_12wk`: Predicted cash 12 weeks from today (+84 days)
+
+Predictions are stored in the `predictions` table at submission time and scored on percent error `(predicted - actual) / actual` when the actual cash at each horizon is known. The agent is evaluated on prediction accuracy at each horizon in addition to realized cash.
+
+**Output:** The weekly dashboard showing cash, subscribers, MRR, this week's metrics, current config, product quality, and inbox notifications.
 
 ---
 

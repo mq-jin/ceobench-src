@@ -174,6 +174,16 @@ TABLE_DOCS = {
             'views_by_group': 'TEXT — JSON dict of group_id → view count (hidden)',
         }
     },
+    'predictions': {
+        'description': 'Cash predictions submitted by the agent at each next-week call. Populated by the 3 positional args to `novamind-operation next-week`. Each next-week submission inserts 3 rows (horizons 7, 28, 84 days). Scored on percent error vs actual cash at each horizon.',
+        'columns': {
+            'submit_day': 'INTEGER — Simulation day when the prediction was submitted (current day at time of next-week call)',
+            'horizon_days': 'INTEGER — Prediction horizon in days (7, 28, or 84)',
+            'metric': "TEXT — Metric being predicted (currently only 'cash')",
+            'predicted_value': 'REAL — The agent-supplied predicted value in dollars',
+            'submitted_at': 'REAL — Wall-clock epoch seconds when the prediction was submitted',
+        }
+    },
     'enterprise_turns': {
         'description': 'Enterprise negotiation turns — each row is one message in a conversation. message_id is the unique identifier for each message.',
         'columns': {
@@ -989,6 +999,17 @@ def init_database(db_path: Path) -> sqlite3.Connection:
             comment_post_ids TEXT NOT NULL DEFAULT '[]'      -- JSON list of post_ids from social_media_posts that are comments on this agent post
         );
         CREATE INDEX IF NOT EXISTS idx_agent_social_posts_day ON agent_social_media_posts(day);
+
+        CREATE TABLE IF NOT EXISTS predictions (
+            submit_day INTEGER NOT NULL,                     -- Simulation day when prediction was submitted
+            horizon_days INTEGER NOT NULL,                   -- Horizon in days (7, 28, 84)
+            metric TEXT NOT NULL,                            -- Metric name ('cash' for v1)
+            predicted_value REAL NOT NULL,                   -- Agent's predicted value
+            submitted_at REAL NOT NULL,                      -- Wall-clock epoch seconds
+            PRIMARY KEY (submit_day, horizon_days, metric)
+        );
+        CREATE INDEX IF NOT EXISTS idx_predictions_submit_day ON predictions(submit_day);
+        CREATE INDEX IF NOT EXISTS idx_predictions_metric ON predictions(metric, horizon_days);
     """)
 
     # V2.3 migration: ads system + promotion system columns
@@ -1506,6 +1527,41 @@ def get_agent_posts_today(conn: sqlite3.Connection, day: int) -> int:
         "SELECT COUNT(*) FROM agent_social_media_posts WHERE day = ?", (day,)
     ).fetchone()
     return row[0] if row else 0
+
+
+# =========================================================================
+# Predictions
+# =========================================================================
+
+def save_predictions(conn: sqlite3.Connection, submit_day: int,
+                     predictions: dict, submitted_at: float) -> None:
+    """Save a batch of predictions submitted on ``submit_day``.
+
+    ``predictions`` maps horizon_days (int) -> {metric: predicted_value}.
+    For v1 only ``metric='cash'`` is used.
+    """
+    rows = []
+    for horizon_days, metric_values in predictions.items():
+        for metric, predicted_value in metric_values.items():
+            rows.append((int(submit_day), int(horizon_days), str(metric),
+                         float(predicted_value), float(submitted_at)))
+    if rows:
+        conn.executemany("""
+            INSERT OR REPLACE INTO predictions
+            (submit_day, horizon_days, metric, predicted_value, submitted_at)
+            VALUES (?, ?, ?, ?, ?)
+        """, rows)
+
+
+def get_predictions(conn: sqlite3.Connection, metric: str = "cash") -> list:
+    """Return all predictions for ``metric`` ordered by submit_day."""
+    result = conn.execute("""
+        SELECT submit_day, horizon_days, metric, predicted_value, submitted_at
+        FROM predictions
+        WHERE metric = ?
+        ORDER BY submit_day ASC, horizon_days ASC
+    """, (metric,)).fetchall()
+    return [dict(row) for row in result]
 
 
 def compute_social_media_multiplier(conn: sqlite3.Connection, current_day: int,

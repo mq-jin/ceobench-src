@@ -75,16 +75,33 @@ def call(tool_name: str, args: Optional[Dict[str, Any]] = None) -> Dict[str, Any
     return result.get('data', {})
 
 
-def next_week() -> Dict[str, Any]:
+def next_week(predictions: Dict[str, float] = None) -> Dict[str, Any]:
     """Advance the simulator by one week (7 days).
+
+    Args:
+        predictions: Required dict with numeric values for keys
+            ``cash_1wk``, ``cash_4wk``, ``cash_12wk`` — the agent's
+            predicted cash on hand at +7d, +28d, +84d from today.
+            The server will return 400 if any is missing.
 
     Returns:
         Dict with 'day' and 'dashboard' keys
     """
+    if predictions is None:
+        raise NovaMindAPIError(
+            "next_week() requires 'predictions' dict with keys "
+            "cash_1wk, cash_4wk, cash_12wk (all numeric)."
+        )
+    body = json.dumps({"predictions": {
+        "cash_1wk": float(predictions["cash_1wk"]),
+        "cash_4wk": float(predictions["cash_4wk"]),
+        "cash_12wk": float(predictions["cash_12wk"]),
+    }}).encode('utf-8')
+
     url = f"{_base_url()}/next-week"
     req = urllib.request.Request(
         url,
-        data=b'{}',
+        data=body,
         headers={'Content-Type': 'application/json'},
         method='POST',
     )

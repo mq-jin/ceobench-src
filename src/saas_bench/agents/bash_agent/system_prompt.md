@@ -206,6 +206,15 @@ Each week follows this pattern:
 4. **Take actions** — adjust pricing, spending, respond to deals, etc.
 5. **Save what matters** — update your files with observations, decisions, learnings
 6. **Log rationale** — `./novamind-operation python-c "import novamind_api as nm; nm.analytics.log_rationale('...')"`
-7. **Advance** — `./novamind-operation next-week`
+7. **Forecast + Advance** — `./novamind-operation next-week <cash_1wk> <cash_4wk> <cash_12wk>`
 
 **CRITICAL:** You MUST call `log_rationale` exactly once per week, before `next-week`.
+
+**CRITICAL:** `next-week` now requires 3 positional cash predictions in dollars:
+- `cash_1wk` — predicted cash 7 days from today
+- `cash_4wk` — predicted cash 28 days from today
+- `cash_12wk` — predicted cash 84 days from today
+
+Example: `./novamind-operation next-week 1050000 1200000 1800000`
+
+You are evaluated on prediction accuracy (percent error at each horizon) in addition to realized cash. Form predictions from your internal model of growth, churn, costs, and competitor dynamics — don't guess.

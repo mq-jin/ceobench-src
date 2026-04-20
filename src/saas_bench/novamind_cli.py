@@ -26,7 +26,20 @@ def _get_workspace() -> Path:
 # =========================================================================
 
 def _cmd_next_week(args):
-    """Advance the simulator by one week (7 days).
+    """Advance the simulator by one week (7 days) — REQUIRES cash predictions.
+
+    Usage:
+        novamind-operation next-week <cash_1wk> <cash_4wk> <cash_12wk>
+
+    Arguments (all required, all numeric, in dollars):
+        cash_1wk   Predicted cash 1 week from today (+7 days).
+        cash_4wk   Predicted cash 4 weeks from today (+28 days).
+        cash_12wk  Predicted cash 12 weeks from today (+84 days).
+
+    All three predictions are recorded at submission time and scored on
+    percent error `(predicted - actual) / actual` once actual cash is known.
+    You are evaluated on prediction accuracy at each horizon in addition
+    to realized cash.
 
     Calls the API server to step the simulation forward by one week.
     Prints the dashboard to stdout, which includes key metrics,
@@ -55,11 +68,16 @@ def _cmd_next_week(args):
     **NOTE:** The next_week call may take several minutes at large subscriber
     counts. This is normal — just wait for the response.
 
-    Exit code 0 on success, 1 on failure.
+    Exit code 0 on success, 1 on failure (including missing predictions).
     """
     from .novamind_api._client import next_week
+    predictions = {
+        "cash_1wk": float(args.cash_1wk),
+        "cash_4wk": float(args.cash_4wk),
+        "cash_12wk": float(args.cash_12wk),
+    }
     try:
-        result = next_week()
+        result = next_week(predictions=predictions)
         dashboard = result.get('dashboard', '')
         print(dashboard)
     except Exception as e:
@@ -71,10 +89,11 @@ def operation_main():
     """Entry point for novamind-operation CLI.
 
     Commands:
-        next-week   Advance the simulator by one week (7 days)
+        next-week   Advance the simulation by one week (7 days).
+                    REQUIRES 3 cash predictions as positional args.
 
     Examples:
-        ./novamind-operation next-week
+        ./novamind-operation next-week 1050000 1200000 1800000
     """
     parser = argparse.ArgumentParser(
         prog='novamind-operation',
@@ -82,8 +101,17 @@ def operation_main():
     )
     subparsers = parser.add_subparsers(dest='command', required=True)
 
-    # next-week
-    sub_next = subparsers.add_parser('next-week', help='Advance the simulation by one week (7 days)')
+    # next-week (requires predictions)
+    sub_next = subparsers.add_parser(
+        'next-week',
+        help='Advance by 7 days. Requires 3 cash predictions (+7d, +28d, +84d).',
+    )
+    sub_next.add_argument('cash_1wk', type=float,
+                          help='Predicted cash 1 week from today (+7 days)')
+    sub_next.add_argument('cash_4wk', type=float,
+                          help='Predicted cash 4 weeks from today (+28 days)')
+    sub_next.add_argument('cash_12wk', type=float,
+                          help='Predicted cash 12 weeks from today (+84 days)')
     sub_next.set_defaults(func=_cmd_next_week)
 
     args = parser.parse_args()

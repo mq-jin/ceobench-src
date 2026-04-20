@@ -65,7 +65,6 @@ def build_weekly_dashboard(
     if day_result:
         ind_subs = day_result.total_individual_subscribers
         ent_seats = day_result.total_enterprise_subscription_seats
-        mrr = day_result.mrr
     else:
         # Fall back to DB
         ind_subs = conn.execute("""
@@ -80,7 +79,6 @@ def build_weekly_dashboard(
             WHERE s.status = 'subscribed' AND s.end_day IS NULL
               AND c.customer_type = 'large'
         """).fetchone()[0]
-        mrr = get_mrr(conn)
 
     week = (day + 6) // 7  # Week number (1-indexed)
     lines = [
@@ -89,7 +87,6 @@ def build_weekly_dashboard(
         f"Cash: ${cash:,.0f}",
         f"Individual Subscribers: {ind_subs}",
         f"Enterprise Subscribed Seats: {ent_seats}",
-        f"MRR: ${mrr:,.0f} (sum of all active effective_price; accounts for promotions and negotiated prices)",
         f"Open Issues: {open_issues}",
     ]
 
@@ -106,7 +103,6 @@ def build_weekly_dashboard(
             f"Overload (peak): {day_result.overload:.1%}" if day_result.overload > 0 else "Overload: None",
             f"Outage: {'YES (' + str(day_result.downtime_minutes) + ' min total)' if day_result.outage else 'No'}",
             f"P95 Latency (peak): {day_result.p95_ms:.0f}ms | Error Rate (peak): {day_result.error_rate:.2%}",
-            f"Revenue: ${day_result.payments_received:,.0f} | Costs: ${day_result.total_costs:,.0f}",
         ])
 
 
@@ -131,7 +127,7 @@ def build_weekly_dashboard(
         gid = row['key'][len('q_group_bonus_'):]
         q_group_bonuses[gid] = float(row['value'])
 
-    base_pq = BenchmarkConfig.base_product_quality  # Class default (0.50)
+    base_pq = BenchmarkConfig.base_product_quality
     tier_a = config.get('tier_A', 1)
     tier_b = config.get('tier_B', 2)
     tier_c = config.get('tier_C', 3)

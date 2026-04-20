@@ -452,7 +452,7 @@ class BenchmarkConfig:
     default_capacity_tier: int = 0
 
     # Lead acquisition cost: fixed cost per new lead (covers onboarding/evaluation)
-    lead_acquisition_cost: float = 1.0
+    lead_acquisition_cost: float = 0.5  # v3.3u: halved from 1.0 (reduce hidden burn from high-lead-volume advertising)
 
     # Network effect: leads generated per 1000 existing customers in each group
     # Read as: "1000 existing S1 customers → ~87 new S1 leads/day"
@@ -546,23 +546,26 @@ class BenchmarkConfig:
     # === COMPETITOR EVENT SYSTEM ===
     # Periodic competitor events raise user quality expectations.
     # Frequency: 6× original (mean 10 days between events).
-    # Magnitude: scales linearly from 1× at day 0 to 6× at total_days.
-    # Early game = small disruptions, late game = major market shifts.
+    # Magnitude: scales linearly from scale_min at day 1 to scale_max at (total_days - late_cutoff_days).
+    # Boosts are blocked entirely before drift_grace_period_days and after (total_days - late_cutoff_days).
+    # Early game = small disruptions, late game = major market shifts, very late = no more shocks.
     competitor_event_mean_interval: int = 13      # 0.75x freq of v3.3i (was 10)
     competitor_event_min_interval: int = 5        # 0.75x freq of v3.3i (was 4)
     competitor_event_post_days: int = 3           # Days of competitor-themed social posts after event
     competitor_event_posts_per_day: int = 2       # Posts/day during event window
     # Boost distribution: lognormal(mu, sigma) — BASE values (1× magnitude)
     # Actual magnitude = base × linear_scale where linear_scale goes 1→16 over simulation
-    competitor_event_boost_mu: float = -4.543     # Halved from -3.85 (subtract ln2≈0.693)
+    competitor_event_boost_mu: float = -4.7129    # v3.3x: 1.5× from v3.3w (added ln(1.5) ≈ 0.4055)
     competitor_event_boost_sigma: float = 1.2     # Lognormal sigma parameter
-    competitor_event_boost_min: float = 0.002     # Halved from 0.004
-    competitor_event_boost_max: float = 0.175     # Halved from 0.35
-    competitor_event_magnitude_scale_min: float = 1.0   # Scale at day 0
-    competitor_event_magnitude_scale_max: float = 6.0   # Scale at total_days (was 4.0)
+    competitor_event_boost_min: float = 0.0016875 # v3.3x: 1.5× from v3.3w
+    competitor_event_boost_max: float = 0.14765625 # v3.3x: 1.5× from v3.3w
+    competitor_event_magnitude_scale_min: float = 1.0   # Scale at day 1 (v3.3t: anchor shifted from day 0)
+    competitor_event_magnitude_scale_max: float = 2.0   # Scale at (total_days - late_cutoff_days) (v3.3t). v3.3l: was 6.0
+    # v3.3t: block competitor events in the last N days so bankruptcy can't be caused by a late-game boost
+    competitor_event_late_cutoff_days: int = 30
 
     # Grace period: no drift or competitor events for the first N days
-    drift_grace_period_days: int = 100  # No global/group/individual drift or competitor events before this day
+    drift_grace_period_days: int = 50  # v3.3p: was 100. No global/group/individual drift or competitor events before this day
 
     # Issue generation
     # Reality-matched: Average SaaS products see 5-15% MAU monthly ticket rates
@@ -748,7 +751,7 @@ class BenchmarkConfig:
 
     # === ISSUE RESOLUTION PARAMS ===
     issue_resolution_base_rate: float = 2.0  # Issues resolved per day at $0 ops spending
-    issue_resolution_ops_scale: float = 0.09  # Additional issues per $ ops spend per day (was 0.08)
+    issue_resolution_ops_scale: float = 0.15  # v3.3r: reverted to 0.15 (was 0.1 in v3.3q). Additional issues resolved per $ ops spend per day
     quick_resolution_threshold_days: int = 2  # Max days for "quick" resolution bonus
     quick_resolution_boost_1day: float = 0.40  # Relationship boost for 1-day resolution
     quick_resolution_boost_2day: float = 0.30  # Relationship boost for 2-day resolution

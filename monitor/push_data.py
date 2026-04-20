@@ -28,29 +28,61 @@ OUTPUT_FILE = Path(__file__).parent / "data.json"
 MODAL_VOLUME = "bossbench-monitor-data"
 
 
-def _open_run_db(run_dir: Path) -> sqlite3.Connection | None:
+class _CachedConn:
+    """Wrapper around a cached sqlite3 conn whose close() is a no-op.
+
+    Lets existing callers keep calling .close() without evicting the cache.
+    """
+    __slots__ = ("_conn",)
+
+    def __init__(self, conn):
+        self._conn = conn
+
+    def close(self):
+        pass
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+
+_DB_CACHE: dict[str, tuple[float, int, sqlite3.Connection]] = {}
+
+
+def _open_run_db(run_dir: Path):
     """Open the run's obfuscated .nmdb database into an in-memory connection.
 
-    Returns an open sqlite3.Connection or None if not found.
+    Returns a cached wrapper if nmdb mtime+size match a prior decrypt,
+    otherwise re-decrypts. Decrypting a 233MB nmdb takes ~20s, so caching
+    is essential when this is called ~25×/push cycle.
     """
     nmdb_path = run_dir / "world.nmdb"
-    if not nmdb_path.exists():
-        # --workspace creates nested subdirs; search recursively
-        candidates = list(run_dir.rglob("world.nmdb"))
+    if not nmdb_path.exists() or nmdb_path.stat().st_size == 0:
+        candidates = [c for c in run_dir.rglob("world.nmdb") if c.stat().st_size > 0]
         if candidates:
-            nmdb_path = candidates[0]
+            nmdb_path = max(candidates, key=lambda c: c.stat().st_size)
         else:
             return None
+    key = str(nmdb_path)
+    st = nmdb_path.stat()
+    cached = _DB_CACHE.get(key)
+    if cached is not None and cached[0] == st.st_mtime and cached[1] == st.st_size:
+        return _CachedConn(cached[2])
     try:
         from saas_bench.db_protection import load_session_db
-        return load_session_db(nmdb_path)
+        conn = load_session_db(nmdb_path)
     except Exception:
         return None
+    if cached is not None:
+        try:
+            cached[2].close()
+        except Exception:
+            pass
+    _DB_CACHE[key] = (st.st_mtime, st.st_size, conn)
+    return _CachedConn(conn)
 
 # Run registry
 RUN_REGISTRY = {
-    "d759b619": {"label": "GPT-5.4 xhigh v3.3d", "model": "gpt-5.4", "seed": 42, "days": 500},
-    "d66cfedf": {"label": "GLM-5.1-FP8 v3.3d", "model": "GLM-5.1-FP8", "seed": 42, "days": 500},
+    "af67e8ef": {"label": "GPT-5.4 xhigh v3.3s", "model": "gpt-5.4", "seed": 42, "days": 500},
 }
 
 

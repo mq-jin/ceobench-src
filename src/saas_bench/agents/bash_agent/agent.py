@@ -70,6 +70,11 @@ class BashAgent(BaseAgent):
         client_type = type(client).__name__
         self.use_anthropic = client_type in ('Anthropic', 'AnthropicBedrock')
 
+        # Detect if the endpoint supports OpenAI Responses API.
+        # Google's OpenAI-compat endpoint only supports chat.completions (not /responses).
+        base_url = str(getattr(client, 'base_url', '') or '')
+        self.supports_responses_api = 'generativelanguage.googleapis.com' not in base_url
+
         # Build system prompt
         self.system_prompt = system_prompt or self._default_system_prompt()
 
@@ -273,7 +278,7 @@ class BashAgent(BaseAgent):
         """Call the LLM and parse the response into an action."""
         if self.use_anthropic:
             return self._call_anthropic()
-        elif self.reasoning_effort:
+        elif self.reasoning_effort and self.supports_responses_api:
             return self._call_openai_responses()
         else:
             return self._call_openai()
@@ -383,8 +388,9 @@ class BashAgent(BaseAgent):
 
                 tool_calls_data = None
                 if assistant_msg.tool_calls:
-                    tool_calls_data = [
-                        {
+                    tool_calls_data = []
+                    for tc in assistant_msg.tool_calls:
+                        tc_dict = {
                             'id': tc.id,
                             'type': 'function',
                             'function': {
@@ -392,8 +398,13 @@ class BashAgent(BaseAgent):
                                 'arguments': tc.function.arguments
                             }
                         }
-                        for tc in assistant_msg.tool_calls
-                    ]
+                        # Preserve Gemini thought_signature (required by Gemini
+                        # OpenAI-compat endpoint — must be echoed back on replay).
+                        tc_extras = getattr(tc, 'model_extra', None) or {}
+                        extra_content = tc_extras.get('extra_content')
+                        if extra_content:
+                            tc_dict['extra_content'] = extra_content
+                        tool_calls_data.append(tc_dict)
 
                 self.conversation.append(Message(
                     role='assistant',
@@ -656,14 +667,31 @@ class BashAgent(BaseAgent):
         if tools:
             tools[-1]['cache_control'] = {"type": "ephemeral"}
 
+        # Claude 4.x thinking API (adaptive effort). Opus 4.7 requires this
+        # shape; 4.6 accepts it too. Old {'type':'enabled','budget_tokens': N}
+        # is rejected by 4.7.
+        _VALID_EFFORTS = {'low', 'medium', 'high', 'xhigh', 'max'}
+        api_kwargs = {
+            'model': self.model,
+            'max_tokens': 32768,
+            'system': system_content,
+            'messages': messages,
+            'tools': tools,
+        }
+        use_streaming = False
+        if self.reasoning_effort and self.reasoning_effort in _VALID_EFFORTS:
+            api_kwargs['thinking'] = {'type': 'adaptive'}
+            api_kwargs['output_config'] = {'effort': self.reasoning_effort}
+            # Stream to avoid SDK's non-streaming 10-minute budget refusal
+            # when thinking can produce long outputs.
+            use_streaming = True
+
         try:
-            response = self.client.messages.create(
-                model=self.model,
-                max_tokens=16384,
-                system=system_content,
-                messages=messages,
-                tools=tools,
-            )
+            if use_streaming:
+                with self.client.messages.stream(**api_kwargs) as stream:
+                    response = stream.get_final_message()
+            else:
+                response = self.client.messages.create(**api_kwargs)
 
             self.total_turns += 1
             self._consecutive_errors = 0

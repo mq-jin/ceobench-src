@@ -193,6 +193,12 @@ def cmd_start_server(args, base: Path):
 
     conn = load_session_db(nmdb_path)
 
+    # Refresh planner stats on the loaded DB. Without this, the planner picks a
+    # nested-loop plan for the open_issues dashboard query (scans 166k active subs
+    # × ~63k filtered customer_state rows → 200+ seconds). After ANALYZE, it picks
+    # an rowid lookup on customer_state and the same query runs in ~10 ms.
+    conn.execute("ANALYZE")
+
     # Run pending migrations on the loaded DB (load_session_db skips init_database)
     try:
         conn.execute("ALTER TABLE agent_social_media_posts ADD COLUMN reasoning_by_group TEXT NOT NULL DEFAULT '{}'")

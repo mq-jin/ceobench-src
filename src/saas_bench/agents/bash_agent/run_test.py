@@ -172,6 +172,8 @@ class BashAgentRunner:
             self.api_key = api_key
         elif provider == "xai":
             self.api_key = env_vars.get("XAI_API_KEY") or os.environ.get("XAI_API_KEY")
+        elif provider == "google":
+            self.api_key = env_vars.get("GOOGLE_API_KEY") or os.environ.get("GOOGLE_API_KEY")
         elif provider == "anthropic":
             self.api_key = env_vars.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_API_KEY")
         elif provider == "bedrock":
@@ -190,6 +192,8 @@ class BashAgentRunner:
             self.base_url = base_url
         elif provider == "xai":
             self.base_url = "https://api.x.ai/v1"
+        elif provider == "google":
+            self.base_url = "https://generativelanguage.googleapis.com/v1beta/openai"
         elif provider == "modal":
             self.base_url = "https://princeton-tony--glm5-serving-server.us-east.modal.direct/v1"
         elif provider == "together":
@@ -977,7 +981,7 @@ def main():
     parser = argparse.ArgumentParser(description="Run bash agent for SaaS Bench")
     parser.add_argument("--model", default="gpt-4o", help="Model name")
     parser.add_argument("--provider", default="openai",
-                        choices=["openai", "xai", "anthropic", "bedrock", "modal", "together"],
+                        choices=["openai", "xai", "google", "anthropic", "bedrock", "modal", "together"],
                         help="API provider")
     parser.add_argument("--base-url", help="Custom API base URL")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
@@ -986,7 +990,7 @@ def main():
     parser.add_argument("--workspace", type=Path, help="Workspace base directory")
     parser.add_argument("--quiet", action="store_true", help="Suppress verbose output")
     parser.add_argument("--reasoning-effort",
-                        choices=["none", "low", "medium", "high", "xhigh"],
+                        choices=["none", "low", "medium", "high", "xhigh", "max"],
                         help="Reasoning effort for GPT-5.2+ models")
     parser.add_argument("--continue-from", type=Path,
                         help="Path to previous run directory to resume from")

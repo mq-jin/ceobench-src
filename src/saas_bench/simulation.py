@@ -4737,6 +4737,11 @@ Requirements:
         if grace > 0 and self.current_day < grace:
             return
 
+        # v3.3t: late-game cutoff — no competitor events in the final N days
+        late_cutoff = getattr(self.config, 'competitor_event_late_cutoff_days', 0)
+        if late_cutoff > 0 and self.current_day > self.config.total_days - late_cutoff:
+            return
+
         # Check days since last competitor event
         last_event = self.conn.execute("""
             SELECT MAX(start_day) as last_day FROM competitor_events
@@ -4775,10 +4780,15 @@ Requirements:
         base_boost = max(self.config.competitor_event_boost_min,
                          min(raw_boost, self.config.competitor_event_boost_max))
 
-        # Linear magnitude scaling: 1× at day 0 → 16× at total_days
+        # v3.3t: linear magnitude scaling from day 1 → (total_days - late_cutoff_days).
+        # scale_min at day 1, scale_max at (total_days - late_cutoff). Events are blocked
+        # entirely before the grace period and after (total_days - late_cutoff), so the
+        # ramp is only ever sampled in [grace, total_days - late_cutoff].
         scale_min = getattr(self.config, 'competitor_event_magnitude_scale_min', 1.0)
         scale_max = getattr(self.config, 'competitor_event_magnitude_scale_max', 16.0)
-        day_frac = min(self.current_day / max(self.config.total_days, 1), 1.0)
+        late_cutoff = getattr(self.config, 'competitor_event_late_cutoff_days', 0)
+        ramp_end_day = max(self.config.total_days - late_cutoff, 2)
+        day_frac = max(0.0, min((self.current_day - 1) / max(ramp_end_day - 1, 1), 1.0))
         magnitude_scale = scale_min + (scale_max - scale_min) * day_frac
         boost = base_boost * magnitude_scale
 
@@ -6617,6 +6627,13 @@ Guidelines:
 
         self.current_day += 1
         config = self.get_current_config()
+
+        # Refresh SQLite planner stats every 7 days. Without this the day-0
+        # empty-DB stats from init_database() stay frozen and the planner
+        # picks O(n²) plans on large tables — step_day grows 16s → 1200s+
+        # as row counts explode (see profile_step_day.py).
+        if self.current_day % 7 == 0:
+            self.conn.execute("ANALYZE")
 
         # L3: Cache global values that don't change within step_day
         self._cache_step_day_globals(config)

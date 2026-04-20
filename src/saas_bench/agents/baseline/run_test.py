@@ -187,6 +187,8 @@ class BaselineRunner:
             self.api_key = api_key
         elif provider == "xai":
             self.api_key = env_vars.get("XAI_API_KEY") or os.environ.get("XAI_API_KEY")
+        elif provider == "google":
+            self.api_key = env_vars.get("GOOGLE_API_KEY") or os.environ.get("GOOGLE_API_KEY")
         elif provider == "anthropic":
             self.api_key = env_vars.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_API_KEY")
         elif provider == "bedrock":
@@ -205,6 +207,8 @@ class BaselineRunner:
             self.base_url = base_url
         elif provider == "xai":
             self.base_url = "https://api.x.ai/v1"
+        elif provider == "google":
+            self.base_url = "https://generativelanguage.googleapis.com/v1beta/openai"
         elif provider == "modal":
             self.base_url = "https://api.us-west-2.modal.direct/v1"
         else:
@@ -1024,7 +1028,7 @@ def main():
 
     parser = argparse.ArgumentParser(description="Run baseline LLM agent for SaaS Bench")
     parser.add_argument("--model", default="gpt-4o", help="Model name")
-    parser.add_argument("--provider", default="openai", choices=["openai", "xai", "anthropic", "bedrock", "modal"], help="API provider")
+    parser.add_argument("--provider", default="openai", choices=["openai", "xai", "google", "anthropic", "bedrock", "modal"], help="API provider")
     parser.add_argument("--base-url", help="Custom API base URL")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument("--scenario", default="default", help="Scenario name")

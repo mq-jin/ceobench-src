@@ -1092,20 +1092,19 @@ TOOL_DOCS = {
         "inputSchema": {"type": "object", "properties": {}},
         "parameters": {},
         "returns": {
-            "dashboard_example": "=== Week 7 Dashboard (Day 49) ===\n\nCASH: $85,234\nSUBSCRIBERS: 145\n\nTHIS WEEK'S METRICS:\n  - Usage: 337,610 units\n  - New subscribers: 35\n  - Cancellations: 14\n  - Upgrades: 3\n  - Downgrades: 5\n  - Overload (peak): 0.0%\n  - Outage: No\n\nCURRENT CONFIG:\n  - Prices: A=$29.0, B=$79.0, C=$199.0\n  - Model tiers: A=2, B=3, C=4\n  - Daily spend: ads=$500.0, ops=$500.0, dev=$500.0\n  - Capacity tier: 0\n\nINBOX (2 messages):\n  - New enterprise leads this week\n  - Enterprise replies this week\n\n=========================",
+            "dashboard_example": "=== Week 7 Dashboard (Day 49) ===\n\nCash: $229,926\nIndividual Subscribers: 12483\nEnterprise Subscribed Seats: 8880\nOpen Issues: 5846\n\n--- This Week's Metrics ---\nUsage: 8,906,662 units\nNew Individual Leads: 6832 | New Enterprise Leads: 66\nNew Individual Subscribers: 3693 | New Enterprise Subscribed Seats: 5845\nCancellations: 111\nUpgrades: 1 | Downgrades: 0\nOverload: None\nOutage: No\nP95 Latency (peak): 203ms | Error Rate (peak): 0.45%\n\n--- Current Config ---\nPrices: A=$22, B=$85, C=$165\nModel Tiers: A=2, B=4, C=5\nQuotas: A=5000, B=10000, C=50000 units/day\nCapacity: Tier 3\nDaily Spend: Ads=$600, Ops=$2500, Dev=$1200\n\n--- Delivered Quality (base=0.20, global_bonus=0.2292) ---\nGroup    Plan A (T2)    Plan B (T4)    Plan C (T5)    Grp Bonus \nS1       0.3405         0.4540         0.4995         +0.0249   \nE1       0.3427         0.4569         0.5026         +0.0277   \n\n--- Inbox ---\n  • 📨 68 new enterprise leads this week (37,541 total seats)\n  • ✉️ 23 new enterprise replies this week\n  • ⏳ 5 enterprise threads awaiting your response",
             "game_over": "GAME OVER - BANKRUPT! (when cash < 0)",
             "simulation_complete": "SIMULATION COMPLETE! (when final day reached)"
         },
         "dashboard_notes": {
-            "MRR": "Monthly Recurring Revenue = SUM(effective_price) from all active subscriptions. Enterprise customers may have negotiated prices different from list prices, so MRR ≠ subscriber_count × list_price. Use python_exec to break down MRR by plan/customer for detailed analysis.",
-            "Revenue_vs_MRR": "Weekly 'Revenue' shows total payments collected during the week. Billing is staggered (each customer has a billing_day_mod30), so weekly revenue may vary. MRR is the theoretical monthly total if all subscribers paid today."
+            "Cash": "End-of-week cash balance. This is your score. All derived revenue/cost metrics (MRR, weekly collected revenue, weekly costs) are intentionally NOT shown on the dashboard — compute them yourself via python_exec / query on the `ledger` table if needed."
         },
         "what_happens": [
             "1. Weekly calculations run (if registered)",
             "2. For each of 7 days: new customers spawned, billing evaluated, usage simulated",
             "3. Service metrics calculated (latency, errors, outages) — peak values shown",
             "4. Revenue collected from billing customers (cumulative for week)",
-            "5. Fixed costs deducted (capacity, operations, development, advertising) × 7",
+            "5. Daily costs deducted (capacity, compute, operations, development, advertising, lead acquisition) × 7",
             "6. Social posts generated on last day of week",
             "7. Enterprise negotiations processed (customer replies, 7-day timeout)",
             "8. Reputation updated daily",
@@ -1120,14 +1119,14 @@ TOOL_DOCS = {
             "tool": "next_week",
             "arguments": {}
         },
-        "internal_notes": "Internally calls step_day() 7 times. Customer social media posts only generated on day 7. Reputation updates run daily. All additive metrics (revenue, costs, leads, etc.) are cumulative for the week. Snapshot metrics (cash, subs, MRR) are end-of-week values. Service metrics show peak (worst) values across the week.",
+        "internal_notes": "Internally calls step_day() 7 times. Customer social media posts only generated on day 7. Reputation updates run daily. Snapshot metrics (cash, subs) are end-of-week values. Service metrics show peak (worst) values across the week.",
         "sample_io": {
             "success": [
-                {"label": "Normal week", "input": {}, "output": "=== Week 7 Dashboard (Day 49) ===\n\nCASH: $85,234  |  MRR: $12,350  |  SUBSCRIBERS: 145\n\nTHIS WEEK'S METRICS:\n  Revenue: $2,884  |  Costs: $19,915\n  New subscribers: 35  |  Cancellations: 14\n  Usage: 337,610 units\n  Overload (peak): 0.0%  |  Outage: No\n\nINBOX (2 new):\n  📨 3 new enterprise leads this week (600 total seats)\n  ✉️ 2 new enterprise replies this week\n\n========================="}
+                {"label": "Normal week", "input": {}, "output": "=== Week 7 Dashboard (Day 49) ===\n\nCash: $229,926\nIndividual Subscribers: 12483\nEnterprise Subscribed Seats: 8880\nOpen Issues: 5846\n\n--- This Week's Metrics ---\nUsage: 8,906,662 units\nNew Individual Leads: 6832 | New Enterprise Leads: 66\nNew Individual Subscribers: 3693 | New Enterprise Subscribed Seats: 5845\nCancellations: 111\nUpgrades: 1 | Downgrades: 0\nOverload: None\nOutage: No\nP95 Latency (peak): 203ms | Error Rate (peak): 0.45%\n\n--- Current Config ---\nPrices: A=$22, B=$85, C=$165\nModel Tiers: A=2, B=4, C=5\nQuotas: A=5000, B=10000, C=50000 units/day\nCapacity: Tier 3\nDaily Spend: Ads=$600, Ops=$2500, Dev=$1200\n\n--- Delivered Quality (base=0.20, global_bonus=0.2292) ---\nGroup    Plan A (T2)    Plan B (T4)    Plan C (T5)    Grp Bonus \nS1       0.3405         0.4540         0.4995         +0.0249   \nE1       0.3427         0.4569         0.5026         +0.0277   \n\n--- Inbox ---\n  • 📨 68 new enterprise leads this week (37,541 total seats)\n  • ✉️ 23 new enterprise replies this week"}
             ],
             "failure": [
-                {"label": "Bankruptcy", "input": {}, "output": "GAME OVER — BANKRUPT! Cash dropped below $0.\n\nFinal stats: 145 subscribers, $12,350 MRR, $-1,234 cash.\n"},
-                {"label": "Simulation complete", "input": {}, "output": "SIMULATION COMPLETE! Final day reached.\n\nFinal stats: 12,000 subscribers, $1,250,000 MRR, $8,500,000 cash."}
+                {"label": "Bankruptcy", "input": {}, "output": "GAME OVER — BANKRUPT! Cash dropped below $0.\n\nFinal stats: 145 subscribers, $-1,234 cash.\n"},
+                {"label": "Simulation complete", "input": {}, "output": "SIMULATION COMPLETE! Final day reached.\n\nFinal stats: 12,000 subscribers, $8,500,000 cash."}
             ]
         }
     },

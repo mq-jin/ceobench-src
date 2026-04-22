@@ -549,8 +549,8 @@ class BenchmarkConfig:
     # Magnitude: scales linearly from scale_min at day 1 to scale_max at (total_days - late_cutoff_days).
     # Boosts are blocked entirely before drift_grace_period_days and after (total_days - late_cutoff_days).
     # Early game = small disruptions, late game = major market shifts, very late = no more shocks.
-    competitor_event_mean_interval: int = 8       # v3.4d: 1.5× freq from v3.4c (was 12)
-    competitor_event_min_interval: int = 3        # v3.4d: 1.5× freq from v3.4c (was 4)
+    competitor_event_mean_interval: int = 3       # v3.4e: 3× freq from v3.4d (was 8)
+    competitor_event_min_interval: int = 1        # v3.4e: 3× freq from v3.4d (was 3)
     competitor_event_post_days: int = 3           # Days of competitor-themed social posts after event
     competitor_event_posts_per_day: int = 2       # Posts/day during event window
     # Boost distribution: lognormal(mu, sigma) — BASE values (1× magnitude)
@@ -1660,7 +1660,7 @@ CUSTOMER_GROUP_E1 = CustomerGroupConfig(
     group_id='E1',
     group_name='Cost-Cutting Enterprises',
     is_enterprise=True,
-    q_min_mean=0.20,  # SMBs accept lower quality if price is right; need basic biz functionality
+    q_min_mean=0.50,  # v3.4e: +0.3 from 0.20 (enterprise q_min bump)
     q_min_std=0.06,   # [Monetizely: SMBs "extremely price-sensitive, switch if cheaper alt good enough"] (0.5x noise)
     # Q_max: Medium — manufacturing/logistics use AI for routine tasks (reports, emails, data entry).
     # Deloitte 2025: ~60% of enterprise AI use cases are basic automation, not advanced reasoning.
@@ -1722,7 +1722,7 @@ CUSTOMER_GROUP_E2 = CustomerGroupConfig(
     group_id='E2',
     group_name='Quality-First Enterprises',
     is_enterprise=True,
-    q_min_mean=0.40,  # Mid-large enterprises equate low quality with risk; require SOC 2/ISO 27001 baseline
+    q_min_mean=0.70,  # v3.4e: +0.3 from 0.40 (enterprise q_min bump)
     q_min_std=0.08,   # [Monetizely: enterprises "equate price with quality"; World Quality Report 2025] (0.5x noise)
     # Q_max: Very high — law firms/biotech/finance need near-human accuracy for complex analysis.
     # Thomson Reuters 2025: Legal AI requires >95% accuracy for adoption at premium firms.
@@ -1781,7 +1781,7 @@ CUSTOMER_GROUP_E3 = CustomerGroupConfig(
     group_id='E3',
     group_name='Strategic Partners',
     is_enterprise=True,
-    q_min_mean=0.45,  # Large enterprises require compliance, security attestation; narrowest SERVQUAL tolerance
+    q_min_mean=0.75,  # v3.4e: +0.3 from 0.45 (enterprise q_min bump)
     q_min_std=0.1,   # [Chaotic Flow: personalized data = high switching costs; even trials must show enterprise-grade] (0.5x noise)
     # Q_max: High — Fortune 500 use diverse AI use cases across many departments.
     # Gartner 2025: Large enterprises deploy AI across 5+ business functions on average.
@@ -2022,7 +2022,7 @@ _ENTERPRISE_GROUP_PARAMS = {
     # [GSA 2025: federal IT contracts average 3-5 years; FedScoop: 95% reject tools with ads]
     # Census of Governments 2025: ~8,600 IT-purchasing entities x 15% AI adoption = ~1,290
     'Government Agencies': dict(
-        q_min_mean=0.50, q_min_std=0.1,
+        q_min_mean=0.80, q_min_std=0.1,  # v3.4e: +0.3 from 0.50
         q_range_mean=0.32, q_range_std=0.07,
         c_max_mean=90.0, c_max_std=36.0,
         slope_mean=0.003, slope_std=0.001,
@@ -2041,7 +2041,7 @@ _ENTERPRISE_GROUP_PARAMS = {
     # [EdTech Magazine 2025: 45% of schools accept sponsored content in free tiers]
     # NCES 2023: ~17,100 IT entities x 8% AI adoption = ~1,370
     'Educational Institutions': dict(
-        q_min_mean=0.25, q_min_std=0.07,
+        q_min_mean=0.55, q_min_std=0.07,  # v3.4e: +0.3 from 0.25
         q_range_mean=0.47, q_range_std=0.08,
         c_max_mean=50.0, c_max_std=20.0,
         slope_mean=0.007, slope_std=0.0025,
@@ -2060,7 +2060,7 @@ _ENTERPRISE_GROUP_PARAMS = {
     # [KLAS Research 2025: healthcare IT contracts avg 5-7 years; requires ad-free]
     # AHA 2025: ~1,700 enterprise entities x 25% deployed = ~425
     'Healthcare Networks': dict(
-        q_min_mean=0.55, q_min_std=0.1,
+        q_min_mean=0.85, q_min_std=0.1,  # v3.4e: +0.3 from 0.55
         q_range_mean=0.35, q_range_std=0.06,
         c_max_mean=130.0, c_max_std=52.0,
         slope_mean=0.002, slope_std=0.001,
@@ -2079,7 +2079,7 @@ _ENTERPRISE_GROUP_PARAMS = {
     # [Cornerstone Advisors 2025: bank core tech contracts avg 7+ years; 98% ad-free]
     # FDIC Q3 2025: ~4,379 x 30% deployed = ~1,314
     'Regional Banks': dict(
-        q_min_mean=0.55, q_min_std=0.1,
+        q_min_mean=0.85, q_min_std=0.1,  # v3.4e: +0.3 from 0.55
         q_range_mean=0.33, q_range_std=0.06,
         c_max_mean=110.0, c_max_std=44.0,
         slope_mean=0.002, slope_std=0.001,
@@ -2097,7 +2097,7 @@ _ENTERPRISE_GROUP_PARAMS = {
     # [Novarica 2025: insurance tech contracts 3-year terms; insurtech tools use sponsored recs]
     # NAIC 2025: ~7,200 entities x 20% = ~1,440
     'Insurance Brokers': dict(
-        q_min_mean=0.35, q_min_std=0.08,
+        q_min_mean=0.65, q_min_std=0.08,  # v3.4e: +0.3 from 0.35
         q_range_mean=0.43, q_range_std=0.07,
         c_max_mean=80.0, c_max_std=32.0,
         slope_mean=0.005, slope_std=0.002,
@@ -2115,7 +2115,7 @@ _ENTERPRISE_GROUP_PARAMS = {
     # [Dodge Construction 2025: 55% prefer annual SaaS; 40% accept ads for discounts]
     # BLS/Census: ~16,500 firms 50+ employees x 5% = ~825
     'Construction Firms': dict(
-        q_min_mean=0.25, q_min_std=0.07,
+        q_min_mean=0.55, q_min_std=0.07,  # v3.4e: +0.3 from 0.25
         q_range_mean=0.43, q_range_std=0.08,
         c_max_mean=55.0, c_max_std=22.0,
         slope_mean=0.007, slope_std=0.0025,
@@ -2133,7 +2133,7 @@ _ENTERPRISE_GROUP_PARAMS = {
     # [TM Forum 2025: telecom vendor contracts avg 5+ years; BSS/OSS vendors ad-free]
     # IBISWorld 2025: ~2,200 unique entities x 35% = ~770
     'Telecom Operators': dict(
-        q_min_mean=0.30, q_min_std=0.08,
+        q_min_mean=0.60, q_min_std=0.08,  # v3.4e: +0.3 from 0.30
         q_range_mean=0.5, q_range_std=0.07,
         c_max_mean=120.0, c_max_std=48.0,
         slope_mean=0.003, slope_std=0.001,
@@ -2151,7 +2151,7 @@ _ENTERPRISE_GROUP_PARAMS = {
     # [Wood Mackenzie 2025: conservative adoption; safety-critical documentation]
     # EIA/Census: ~3,500 enterprise-grade x 20% = ~700
     'Energy Companies': dict(
-        q_min_mean=0.40, q_min_std=0.08,
+        q_min_mean=0.70, q_min_std=0.08,  # v3.4e: +0.3 from 0.40
         q_range_mean=0.42, q_range_std=0.07,
         c_max_mean=100.0, c_max_std=40.0,
         slope_mean=0.004, slope_std=0.0015,
@@ -2170,7 +2170,7 @@ _ENTERPRISE_GROUP_PARAMS = {
     # [Deloitte Real Estate 2025: 55% of CRE tech platforms include sponsored listings]
     # NAREIT/NAR: ~3,500 enterprise CRE firms x 12% = ~420
     'Real Estate Groups': dict(
-        q_min_mean=0.20, q_min_std=0.06,
+        q_min_mean=0.50, q_min_std=0.06,  # v3.4e: +0.3 from 0.20
         q_range_mean=0.45, q_range_std=0.08,
         c_max_mean=65.0, c_max_std=26.0,
         slope_mean=0.006, slope_std=0.002,
@@ -2188,7 +2188,7 @@ _ENTERPRISE_GROUP_PARAMS = {
     # [Drewry Maritime 2025: shipping IT contracts avg 4+ years; systems strictly enterprise-grade]
     # Census/FMCSA: ~2,500 entities x 18% = ~450
     'Shipping Lines': dict(
-        q_min_mean=0.25, q_min_std=0.07,
+        q_min_mean=0.55, q_min_std=0.07,  # v3.4e: +0.3 from 0.25
         q_range_mean=0.47, q_range_std=0.07,
         c_max_mean=75.0, c_max_std=30.0,
         slope_mean=0.005, slope_std=0.002,

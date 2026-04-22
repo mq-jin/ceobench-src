@@ -334,6 +334,54 @@ class BashAgentRunner:
     # Workspace setup
     # =========================================================================
 
+    _GITIGNORE_CONTENT = """\
+sessions/
+_engine/
+*.nmdb
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+"""
+
+    def _git(self, *args: str, check: bool = False) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["git", *args],
+            cwd=str(self.agent_workspace),
+            capture_output=True, text=True,
+            check=check,
+        )
+
+    def _git_init_workspace(self):
+        if (self.agent_workspace / ".git").exists():
+            return
+        self._git("init", "-q", "-b", "main")
+        self._git("config", "user.email", "bash-agent@bossbench.local")
+        self._git("config", "user.name", "BashAgent")
+        gitignore_path = self.agent_workspace / ".gitignore"
+        if not gitignore_path.exists():
+            gitignore_path.write_text(self._GITIGNORE_CONTENT)
+
+    def _git_commit_workspace(self, message: str, once_key: Optional[str] = None):
+        if not (self.agent_workspace / ".git").exists():
+            return
+        if once_key is not None:
+            existing = self._git("log", "--grep", f"[{once_key}]", "--fixed-strings", "--oneline")
+            if existing.returncode == 0 and existing.stdout.strip():
+                return
+            message = f"{message} [{once_key}]"
+        self._git("add", "-A")
+        status = self._git("status", "--porcelain")
+        if status.returncode == 0 and not status.stdout.strip():
+            # Empty commit so the tag still lands on the timeline
+            self._git("commit", "--allow-empty", "-q", "-m", message)
+        else:
+            self._git("commit", "-q", "-m", message)
+
     def _initialize_from_public_repo(self):
         """Copy public/ into agent workspace and create a session via the CLI.
 
@@ -355,6 +403,7 @@ class BashAgentRunner:
             )
 
         self.agent_workspace.mkdir(parents=True, exist_ok=True)
+        self._git_init_workspace()
 
         # Copy directories (including compiled engine)
         for dirname in ['docs', 'novamind_api', 'examples', '_engine']:
@@ -401,6 +450,7 @@ class BashAgentRunner:
         session_info = json.loads(result.stdout)
         self._session_id = session_info["session_id"]
         print(f"  Session created via CLI: {self._session_id}")
+        self._git_commit_workspace("Initial workspace setup (day 0)")
         return session_info
 
     def _launch_server(self):
@@ -929,6 +979,11 @@ class BashAgentRunner:
 
             if verbose:
                 print(f"  📊 End of day: Cash=${_cash:,.0f}, Subs={_subs}")
+
+            # Weekly git commit of agent workspace (before checkpoint so resume re-tries)
+            if sim_day > 0 and sim_day % 7 == 0:
+                week_num = sim_day // 7
+                self._git_commit_workspace(f"Week {week_num} (day {sim_day})", once_key=f"week-{week_num}")
 
             # Save checkpoint (use actual sim day, not harness loop counter)
             self._save_checkpoint(sim_day)

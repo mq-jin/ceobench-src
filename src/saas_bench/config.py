@@ -530,7 +530,7 @@ class BenchmarkConfig:
     # Base product quality on Day 1 (before any dev spending or research).
     # Model tier multiplier is applied to this: delivered_quality = product_quality × tier_multiplier
     # where product_quality = base_product_quality + q_shared_bonus + q_group_bonus
-    base_product_quality: float = 0.2
+    base_product_quality: float = 0.25
 
     # Development improvement rates
     # Reality-matched: Software quality improves ~15-25% with sustained R&D investment

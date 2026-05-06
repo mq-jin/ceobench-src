@@ -4,8 +4,8 @@
 
 # 🤖 CEO-Bench: Can Agents Play the Long Game?
 
-> Source repository for **CEO-Bench** — a long-horizon agent benchmark in which an
-> LLM agent operates a fictional B2B/B2C AI SaaS company for 500 simulated days.
+Source repository for **CEO-Bench** — a long-horizon agent benchmark in which an
+LLM agent operates a fictional B2B/B2C AI SaaS company for 500 simulated days.
 
 This repo contains the simulator engine, the bash-agent baseline harness, and the
 build pipeline that produces the public, tamper-resistant distribution
@@ -16,14 +16,14 @@ build pipeline that produces the public, tamper-resistant distribution
 ## 📊 Overview
 
 <p align="center">
-  <img src="assets/teaser.pdf" alt="CEO-Bench teaser" width="100%"/>
+  <img src="assets/teaser.png" alt="CEO-Bench teaser" width="100%"/>
 </p>
 
-> *CEO-Bench evaluates general long-horizon agent capabilities by simulating a
-> startup over 500 days in a realistic and challenging environment. The agent
-> operates through a programmable interface with access to business databases,
-> company management tools, and social media. Outcomes are driven by a partially
-> observable, noisy, and evolving market with delayed and coupled consequences.*
+CEO-Bench evaluates general long-horizon agent capabilities by simulating a
+startup over 500 days in a realistic and challenging environment. The agent
+operates through a programmable interface with access to business databases,
+company management tools, and social media. Outcomes are driven by a partially
+observable, noisy, and evolving market with delayed and coupled consequences.
 
 ## 📝 What CEO-Bench tests
 
@@ -104,9 +104,9 @@ Read instructions
 The agent will discover `README.md` and `docs/`, learn the CLI, and start playing.
 The score at the end is the agent's total cash on day 500.
 
-> 🔓 The session ledger (`world.nmdb`) is encrypted so an agent cannot read it
-> directly. To analyze a finished run — including computing cash-on-hand on each
-> day — see [docs/decrypting-database.md](docs/decrypting-database.md).
+🔓 The session ledger (`world.nmdb`) is encrypted so an agent cannot read it
+directly. To analyze a finished run — including computing cash-on-hand on each
+day — see [docs/decrypting-database.md](docs/decrypting-database.md).
 
 ---
 

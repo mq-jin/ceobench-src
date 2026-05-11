@@ -40,18 +40,30 @@ import sqlcipher3
 # --------------------------------------------------------------------------- #
 
 def _get_key() -> str:
-    """Return the SQLCipher key from the NMDB_KEY env var.
+    """Return the SQLCipher key.
 
-    Raises RuntimeError if unset. Callers in the host harness must ensure the
-    var is present BEFORE importing this module. The bwrap sandbox must NOT
-    set this var for the agent.
+    Resolution order:
+      1. ``saas_bench._embedded_key._NMDB_KEY`` — present inside the published
+         zipapp (compiled to .pyc at build time). This is the normal path
+         when running the public benchmark.
+      2. ``NMDB_KEY`` env var — fallback for private development / CI runs
+         that don't go through the zipapp (e.g. ``uv run pytest`` against
+         legacy sessions encrypted with a different key).
+
+    Raises RuntimeError only if neither is available.
     """
+    try:
+        from saas_bench._embedded_key import _NMDB_KEY  # type: ignore
+        if _NMDB_KEY:
+            return _NMDB_KEY
+    except ImportError:
+        pass
     k = os.environ.get("NMDB_KEY")
     if not k:
         raise RuntimeError(
-            "NMDB_KEY env var is not set. The host harness must export it "
-            "(e.g. via `.env`) before launching novamind-server. It must "
-            "NEVER be set inside the agent bwrap sandbox."
+            "No SQLCipher key available: neither saas_bench._embedded_key nor "
+            "the NMDB_KEY env var is set. The zipapp must include _embedded_key "
+            "(see scripts/build_public.py); private dev runs must export NMDB_KEY."
         )
     return k
 

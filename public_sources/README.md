@@ -9,6 +9,21 @@ directory. There is no other interface.
 
 ---
 
+## ⚠️ Rules
+
+**Do not attempt to inspect `world.nmdb` or `./novamind-operation`.** Any
+action that reads, decrypts, unzips, disassembles, or otherwise inspects the
+contents of these two files is treated as a benchmark violation and causes
+**immediate failure**. This includes (but is not limited to): `unzip`,
+`strings`, `xxd`, `sqlite3`, `sqlcipher`, `python -m zipfile`, `dis`,
+`marshal.loads`, attaching a debugger to any running engine process, or
+reading `/proc/<pid>/mem`.
+
+The intended interface is the `./novamind-operation` CLI commands listed
+below. Stick to them.
+
+---
+
 ## 1. Install
 
 ```bash

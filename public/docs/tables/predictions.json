@@ -1,0 +1,13 @@
+{
+  "table": "predictions",
+  "description": "Cash forecasts submitted by the agent at each next-week call. Populated by the 12 positional args to `novamind-operation next-week`. Each next-week submission inserts 4 rows (horizons 7, 28, 84, 182 days) with point estimate plus 95% CI lower/upper bounds. Scored on point percent error, CI coverage (does actual fall in [lower, upper]?), and sharpness (interval width / actual) at each horizon.",
+  "columns": {
+    "submit_day": "INTEGER \u2014 Simulation day when the prediction was submitted (current day at time of next-week call)",
+    "horizon_days": "INTEGER \u2014 Prediction horizon in days (7, 28, 84, or 182)",
+    "metric": "TEXT \u2014 Metric being predicted (currently only 'cash')",
+    "predicted_value": "REAL \u2014 Agent-supplied point estimate in dollars",
+    "predicted_lower": "REAL \u2014 95% CI lower bound in dollars (NULL for legacy rows)",
+    "predicted_upper": "REAL \u2014 95% CI upper bound in dollars (NULL for legacy rows)",
+    "submitted_at": "REAL \u2014 Wall-clock epoch seconds when the prediction was submitted"
+  }
+}

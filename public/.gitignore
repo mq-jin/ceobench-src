@@ -1,0 +1,16 @@
+# Session data
+sessions/
+
+# Python
+__pycache__/
+*.pyo
+.venv/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+*.swp
+*.swo
+*~

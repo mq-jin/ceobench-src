@@ -13,9 +13,9 @@
 <p align="center">Princeton University</p>
 
 <p align="center">
-  <a href="https://ceobench.com">Website</a> &nbsp;|&nbsp;
-  <a href="#">Paper</a> &nbsp;|&nbsp;
-  <a href="https://ceobench.com/trajectory-viewer/">Trajectory Viewer</a>
+  <a href="https://ceobench.com">🌐 Website</a> &nbsp;|&nbsp;
+  <a href="#">📄 Paper</a> &nbsp;|&nbsp;
+  <a href="https://ceobench.com/trajectory-viewer/">📊 Trajectory Viewer</a>
 </p>
 
 

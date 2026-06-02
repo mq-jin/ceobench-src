@@ -651,7 +651,7 @@ __pycache__/
             flagged.append(str(suspicious.relative_to(self.agent_workspace)))
         return flagged
 
-    def _save_checkpoint(self, day: int):
+    def _save_checkpoint(self, day: int, fetch_daily_scripts: bool = True):
         """Save checkpoint for resume capability."""
         # Tamper detection: log + persist any suspicious files in workspace.
         tamper_hits = self._check_tamper(day)
@@ -668,15 +668,16 @@ __pycache__/
 
         # Get daily scripts from server
         daily_scripts = {}
-        try:
-            resp = self._http_get('/daily-scripts')
-            if resp.get('success'):
-                # The GET endpoint returns script names/sizes, not content
-                # For full content we need to query differently
-                # For now, save empty — the scripts are also in the session dir
+        if fetch_daily_scripts:
+            try:
+                resp = self._http_get('/daily-scripts')
+                if resp.get('success'):
+                    # The GET endpoint returns script names/sizes, not content
+                    # For full content we need to query differently
+                    # For now, save empty — the scripts are also in the session dir
+                    pass
+            except Exception:
                 pass
-        except Exception:
-            pass
 
         checkpoint = {
             'day': day,
@@ -1047,6 +1048,9 @@ __pycache__/
         current_day = start_day - 1
         game_ended = False
         game_outcome = None
+        sim_day = current_day
+        _cash = 0
+        last_status: Dict[str, Any] = {}
 
         for day in range(start_day, self.total_days + 1):
             _day_start = _time.monotonic()
@@ -1055,6 +1059,7 @@ __pycache__/
             # Get actual simulation day from server (may differ from harness loop counter
             # when agent uses next-week which advances 7 sim days per loop iteration)
             status = self._get_game_status()
+            last_status = status
             sim_day = status.get('day', day)
 
             if verbose:
@@ -1163,6 +1168,7 @@ __pycache__/
 
                 # Check server for timeout (via game-status)
                 status = self._get_game_status()
+                last_status = status
                 sim_day = status.get('day', sim_day)  # Update sim_day after potential next-week
                 self._commit_weeks_up_to(sim_day)  # Commit any sim-week boundary just crossed
 
@@ -1196,10 +1202,14 @@ __pycache__/
             if game_ended:
                 break
 
-            # If day didn't end through agent action, force step_day via HTTP.
+            # If the agent did not call next-week within this harness chunk, do
+            # not fabricate a /next-week call. The API requires the same
+            # rationale/prediction payload that the agent-facing CLI collects.
+            # Continuing at the same sim day preserves benchmark semantics and
+            # avoids noisy HTTP 400s from an empty forced advance.
             # Exception: on the very first outer iteration after a mid-day
             # resume (agent's last logged tool was NOT next-week), suppress
-            # the force once so the agent can keep planning. Flag is cleared
+            # the warning once so the agent can keep planning. Flag is cleared
             # after one iteration so subsequent days behave normally.
             _step_elapsed = 0
             if not day_ended:
@@ -1207,21 +1217,11 @@ __pycache__/
                     print(f"  [resume] Skipping force step_day on resume iter (last tool was not next-week)")
                     self._suppress_force_step_day_once = False
                 else:
-                    _step_start = _time.monotonic()
-                    resp = self._advance_day_http()
-                    _step_elapsed = _time.monotonic() - _step_start
-
-                    if not resp.get('success'):
-                        error = resp.get('error', '')
-                        if error == 'step_day_timeout':
-                            print(f"\n⚠️  step_day timed out on sim day {sim_day} ({_step_elapsed:.1f}s)")
-                            print(f"Auto-quitting. Saving checkpoint...")
-                            self._save_checkpoint(sim_day)
-                            game_ended = True
-                            game_outcome = 'timeout'
-                            break
-                        else:
-                            print(f"\n❌ advance_day failed: {error}")
+                    print(
+                        f"\n⚠️  Turn cap reached on sim day {sim_day} without next-week; "
+                        f"continuing at the same sim day."
+                    )
+                    self._log_timing("turn_cap_no_advance", sim_day, turns=turns_today)
 
             # Log step_day timing
             self._log_timing("step_day", sim_day, elapsed_s=round(_step_elapsed, 2))
@@ -1232,6 +1232,7 @@ __pycache__/
 
             # Get post-day status (also refresh sim_day)
             status = self._get_game_status()
+            last_status = status
             sim_day = status.get('day', sim_day)
             self._commit_weeks_up_to(sim_day)  # Commit any sim-week boundary crossed by step_day
             _subs = status.get('subscribers', 0)
@@ -1303,12 +1304,28 @@ __pycache__/
                 break
 
         if not game_outcome:
-            game_outcome = 'completed'
+            game_outcome = 'completed' if sim_day >= self.total_days else 'incomplete'
 
-        # Stop server
+        # Read final state before shutdown; after _stop_server() the HTTP cash
+        # helper intentionally cannot query the in-memory simulator anymore.
+        final_status = dict(last_status)
+        if self._server_port:
+            try:
+                queried_status = self._http_get('/game-status')
+                if queried_status:
+                    final_status = queried_status
+                    sim_day = queried_status.get('day', sim_day)
+            except Exception:
+                pass
+
+        final_cash = final_status.get('cash')
+        if final_cash is None:
+            final_cash = self._get_cash() if self._server_port else _cash
+
+        # Stop server, then checkpoint so world.nmdb is copied after shutdown
+        # has drained async saves and written the fresh session DB.
         self._stop_server()
-
-        final_cash = self._get_cash() if self._server_port else _cash
+        self._save_checkpoint(sim_day, fetch_daily_scripts=False)
 
         if verbose:
             print(f"\n{'='*60}")

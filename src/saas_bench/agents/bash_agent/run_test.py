@@ -31,6 +31,7 @@ if str(package_root) not in sys.path:
     sys.path.insert(0, str(package_root))
 
 from openai import OpenAI
+from saas_bench.config import BenchmarkConfig
 
 try:
     import anthropic
@@ -68,8 +69,8 @@ class BashAgentRunner:
 
     def __init__(
         self,
-        model: str = "gpt-4o",
-        provider: str = "openai",
+        model: Optional[str] = None,
+        provider: Optional[str] = None,
         base_url: Optional[str] = None,
         api_key: Optional[str] = None,
         seed: int = 42,
@@ -81,15 +82,16 @@ class BashAgentRunner:
         continue_from: Optional[Path] = None,
         label: Optional[str] = None,
     ):
-        self.model = model
-        self.provider = provider
+        default_config = BenchmarkConfig()
+        self.model = model or default_config.agent_llm_model
+        self.provider = provider or default_config.agent_llm_provider
         self.seed = seed
         self.scenario = scenario
         # Round down to nearest full week so the simulation always ends on a
         # week boundary (no partial trailing week). e.g. 500 -> 497.
         self.total_days = (total_days // 7) * 7
         self.initial_cash = initial_cash
-        self.reasoning_effort = reasoning_effort
+        self.reasoning_effort = reasoning_effort or default_config.agent_llm_reasoning_effort
         self.continue_from = continue_from
         self.label = label  # Optional human-readable variant tag — surfaced on the dashboard
 
@@ -190,45 +192,45 @@ class BashAgentRunner:
                 "in .env or the environment."
             ) from exc
 
-        self.use_anthropic = provider in ("anthropic", "bedrock")
+        self.use_anthropic = self.provider in ("anthropic", "bedrock")
 
         if api_key:
             self.api_key = api_key
-        elif provider == "xai":
+        elif self.provider == "xai":
             self.api_key = env_vars.get("XAI_API_KEY") or os.environ.get("XAI_API_KEY")
-        elif provider == "google":
+        elif self.provider == "google":
             self.api_key = env_vars.get("GOOGLE_API_KEY") or os.environ.get("GOOGLE_API_KEY")
-        elif provider == "anthropic":
+        elif self.provider == "anthropic":
             self.api_key = env_vars.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_API_KEY")
-        elif provider == "bedrock":
+        elif self.provider == "bedrock":
             self.api_key = None
-        elif provider == "modal":
+        elif self.provider == "modal":
             self.api_key = env_vars.get("MODAL_API_KEY") or os.environ.get("MODAL_API_KEY")
-        elif provider == "together":
+        elif self.provider == "together":
             self.api_key = env_vars.get("TOGETHER_API_KEY") or os.environ.get("TOGETHER_API_KEY")
-        elif provider == "ai_sandbox":
+        elif self.provider == "ai_sandbox":
             self.api_key = env_vars.get("AI_SANDBOX_KEY") or os.environ.get("AI_SANDBOX_KEY")
         else:
             self.api_key = env_vars.get("OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY")
 
-        if not self.api_key and provider not in ("bedrock",):
-            raise ValueError(f"No API key found for provider {provider}")
+        if not self.api_key and self.provider not in ("bedrock",):
+            raise ValueError(f"No API key found for provider {self.provider}")
 
         if base_url:
             self.base_url = base_url
-        elif provider == "xai":
+        elif self.provider == "xai":
             self.base_url = "https://api.x.ai/v1"
-        elif provider == "google":
+        elif self.provider == "google":
             self.base_url = "https://generativelanguage.googleapis.com/v1beta/openai"
-        elif provider == "modal":
+        elif self.provider == "modal":
             self.base_url = os.environ.get("MODAL_BASE_URL")
-        elif provider == "together":
+        elif self.provider == "together":
             self.base_url = "https://api.together.xyz/v1"
         else:
             self.base_url = None
 
         # Create client
-        if provider == "bedrock":
+        if self.provider == "bedrock":
             if not ANTHROPIC_AVAILABLE:
                 raise ImportError("anthropic package required for Bedrock")
             self.client = AnthropicBedrock(
@@ -237,11 +239,11 @@ class BashAgentRunner:
                 aws_session_token=os.environ.get("AWS_SESSION_TOKEN"),
                 aws_region=os.environ.get("AWS_REGION", "us-east-2"),
             )
-        elif provider == "anthropic":
+        elif self.provider == "anthropic":
             if not ANTHROPIC_AVAILABLE:
                 raise ImportError("anthropic package required")
             self.client = anthropic.Anthropic(api_key=self.api_key)
-        elif provider == "ai_sandbox":
+        elif self.provider == "ai_sandbox":
             try:
                 from portkey_ai import Portkey
             except ImportError as e:
@@ -677,6 +679,7 @@ __pycache__/
             'run_id': self.run_id,
             'model': self.model,
             'provider': self.provider,
+            'reasoning_effort': self.reasoning_effort,
             'seed': self.seed,
             'scenario': self.scenario,
             'agent_total_turns': self.agent.total_turns if self.agent else 0,
@@ -959,6 +962,7 @@ __pycache__/
             'run_id': self.run_id,
             'model': self.model,
             'provider': self.provider,
+            'reasoning_effort': self.reasoning_effort,
             'seed': self.seed,
             'scenario': self.scenario,
             'total_days': self.total_days,
@@ -1331,11 +1335,13 @@ __pycache__/
 def main():
     import argparse
 
+    default_config = BenchmarkConfig()
     parser = argparse.ArgumentParser(description="Run bash agent for SaaS Bench")
-    parser.add_argument("--model", default="gpt-4o", help="Model name")
-    parser.add_argument("--provider", default="openai",
+    parser.add_argument("--model", default=None,
+                        help=f"Model name (default: BenchmarkConfig.agent_llm_model={default_config.agent_llm_model})")
+    parser.add_argument("--provider", default=None,
                         choices=["openai", "xai", "google", "anthropic", "bedrock", "modal", "together", "ai_sandbox"],
-                        help="API provider")
+                        help=f"API provider (default: BenchmarkConfig.agent_llm_provider={default_config.agent_llm_provider})")
     parser.add_argument("--base-url", help="Custom API base URL")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument("--scenario", default="default", help="Scenario name")
@@ -1344,7 +1350,8 @@ def main():
     parser.add_argument("--quiet", action="store_true", help="Suppress verbose output")
     parser.add_argument("--reasoning-effort",
                         choices=["none", "low", "medium", "high", "xhigh", "max"],
-                        help="Reasoning effort for GPT-5.2+ models")
+                        help="Reasoning effort for reasoning models "
+                             f"(default: BenchmarkConfig.agent_llm_reasoning_effort={default_config.agent_llm_reasoning_effort})")
     parser.add_argument("--continue-from", type=Path,
                         help="Path to previous run directory to resume from")
     parser.add_argument("--api-key", help="API key (overrides .env and environment)")
@@ -1352,7 +1359,6 @@ def main():
                         help="Variant tag stored in config.json and shown on the dashboard "
                              "(e.g. 'leads_x1.25'). Lets multiple config variants be "
                              "distinguished without forking the run_id scheme.")
-
     args = parser.parse_args()
 
     runner = BashAgentRunner(

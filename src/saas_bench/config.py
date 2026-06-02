@@ -659,8 +659,9 @@ class BenchmarkConfig:
     budget_limit_usd: float = 50.0
 
     # === LLM MODEL CONFIGURATION ===
-    # Agent LLM (the AI being benchmarked)
-    # Change these to configure the agent model
+    # Agent LLM (the AI being benchmarked). CLI flags in bash_agent/run_test.py
+    # can override these defaults for ad hoc runs.
+    agent_llm_provider: str = "openai"
     agent_llm_model: str = "gpt-5.2"
     agent_llm_reasoning_effort: str = "low"  # "low", "medium", "high"
 
@@ -677,10 +678,10 @@ class BenchmarkConfig:
     social_post_llm_temperature: float = 0.9  # Higher for creative variety
     social_post_llm_max_tokens: int = 1000
 
-    # Enterprise Customer LLM (for negotiation responses, initial outreach)
-    # Uses Claude Sonnet 4.5 via Bedrock - smarter for complex negotiations
+    # Enterprise Customer LLM (for negotiation responses, initial outreach).
+    # Uses Claude Sonnet 4.5 via Bedrock by default.
     enterprise_llm_model: str = "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
-    enterprise_llm_provider: str = "bedrock"  # "bedrock" or "openai"
+    enterprise_llm_provider: str = "bedrock"  # "bedrock" | "anthropic" | "openai"
     enterprise_llm_temperature: float = 0.7
     enterprise_llm_max_tokens: int = 300
 

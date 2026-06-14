@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import threading
+from dataclasses import asdict, dataclass, field
 from typing import Literal, Sequence
 
 
@@ -20,6 +21,7 @@ class ArenaEmail:
     day: int
     subject: str
     body: str
+    interaction_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -31,6 +33,7 @@ class ArenaMoneyTransfer:
     day: int
     amount: float
     memo: str = ""
+    interaction_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -44,6 +47,7 @@ class ArenaResearchShare:
     group_id: str | None = None
     recipient_company_id: str | None = None
     memo: str = ""
+    interaction_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -58,7 +62,9 @@ class ArenaCustomerIntroduction:
     recipient_company_id: str
     day: int
     customer_ref: str
+    group_id: str | None = None
     memo: str = ""
+    interaction_id: str = ""
 
 
 @dataclass
@@ -66,6 +72,13 @@ class ArenaInteractionLog:
     """Append-only interaction records for one arena run."""
 
     company_ids: set[str]
+    _next_event_index: int = 1
+    _event_id_lock: threading.Lock = field(
+        default_factory=threading.Lock,
+        init=False,
+        repr=False,
+        compare=False,
+    )
     emails: list[ArenaEmail] = field(default_factory=list)
     money_transfers: list[ArenaMoneyTransfer] = field(default_factory=list)
     research_shares: list[ArenaResearchShare] = field(default_factory=list)
@@ -102,6 +115,7 @@ class ArenaInteractionLog:
             day=day,
             subject=subject,
             body=body,
+            interaction_id=self._new_interaction_id("email"),
         )
         self.emails.append(email)
         return email
@@ -126,6 +140,7 @@ class ArenaInteractionLog:
             day=day,
             amount=amount,
             memo=memo,
+            interaction_id=self._new_interaction_id("transfer"),
         )
         self.money_transfers.append(transfer)
         return transfer
@@ -162,6 +177,7 @@ class ArenaInteractionLog:
             group_id=group_id,
             recipient_company_id=recipient_company_id,
             memo=memo,
+            interaction_id=self._new_interaction_id("research"),
         )
         self.research_shares.append(share)
         return share
@@ -173,6 +189,7 @@ class ArenaInteractionLog:
         recipient_company_id: str,
         day: int,
         customer_ref: str,
+        group_id: str | None = None,
         memo: str = "",
     ) -> ArenaCustomerIntroduction:
         self._validate_direct_interaction(sender_company_id, recipient_company_id)
@@ -185,7 +202,9 @@ class ArenaInteractionLog:
             recipient_company_id=recipient_company_id,
             day=day,
             customer_ref=customer_ref,
+            group_id=group_id,
             memo=memo,
+            interaction_id=self._new_interaction_id("intro"),
         )
         self.customer_introductions.append(introduction)
         return introduction
@@ -214,6 +233,31 @@ class ArenaInteractionLog:
                 if introduction.recipient_company_id == company_id
             ],
         }
+
+    def inbox_dict_for(self, company_id: str) -> dict[str, list[dict]]:
+        """Return a JSON-serializable inbox for one company."""
+
+        inbox = self.inbox_for(company_id)
+        return {
+            key: [asdict(item) for item in items]
+            for key, items in inbox.items()
+        }
+
+    def event_counts(self) -> dict[str, int]:
+        """Small public summary useful for coordinator health checks."""
+
+        return {
+            "emails": len(self.emails),
+            "money_transfers": len(self.money_transfers),
+            "research_shares": len(self.research_shares),
+            "customer_introductions": len(self.customer_introductions),
+        }
+
+    def _new_interaction_id(self, prefix: str) -> str:
+        with self._event_id_lock:
+            interaction_id = f"{prefix}_{self._next_event_index:06d}"
+            self._next_event_index += 1
+            return interaction_id
 
     def _validate_direct_interaction(
         self,

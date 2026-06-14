@@ -685,6 +685,12 @@ if __name__ == "__main__":
         """Environment for host-side simulator processes."""
         env = os.environ.copy()
         env["NOVAMIND_SERVER_MODE"] = "1"
+        if self.arena_company_id and self.arena_coordinator_port:
+            env["CEOBENCH_ARENA_COMPANY_ID"] = self.arena_company_id
+            env["CEOBENCH_ARENA_DISPLAY_NAME"] = self.arena_display_name or self.arena_company_id
+            env["CEOBENCH_ARENA_COORDINATOR_PORT"] = str(self.arena_coordinator_port)
+            env["CEOBENCH_ARENA_COMPANY_COUNT"] = str(self.arena_company_count or 1)
+            env["CEOBENCH_ARENA_SHARED_COMPETITOR_EVENTS"] = "1"
         return env
 
     def _launch_server(self):
@@ -734,11 +740,38 @@ if __name__ == "__main__":
         for i in range(60):
             try:
                 self._http_get('/health', timeout=2)
+                self._register_arena_company_server()
                 return
             except Exception:
                 _time.sleep(0.5)
 
         raise RuntimeError("Server did not respond to /health after 30s")
+
+    def _register_arena_company_server(self):
+        """Register this company's API server with the Arena coordinator."""
+
+        if not self.arena_company_id or not self.arena_coordinator_port:
+            return
+
+        import urllib.request
+
+        payload = json.dumps({
+            "company_id": self.arena_company_id,
+            "display_name": self.arena_display_name or self.arena_company_id,
+            "api_port": int(self._server_port),
+        }).encode()
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{int(self.arena_coordinator_port)}/arena-register-company",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            result = json.loads(resp.read())
+        if not result.get("success"):
+            raise RuntimeError(
+                f"Arena company registration failed: {result.get('error', 'unknown_error')}"
+            )
 
     def _stop_server(self):
         """Stop the server subprocess."""
@@ -1090,6 +1123,7 @@ if __name__ == "__main__":
                 "CEOBENCH_ARENA_DISPLAY_NAME": self.arena_display_name or self.arena_company_id,
                 "CEOBENCH_ARENA_COORDINATOR_PORT": str(self.arena_coordinator_port),
                 "CEOBENCH_ARENA_COMPANY_COUNT": str(self.arena_company_count or 1),
+                "CEOBENCH_ARENA_SHARED_COMPETITOR_EVENTS": "1",
             })
         self.tool_executor = BashAgentToolExecutor(
             workspace_path=self.agent_workspace,
@@ -1554,9 +1588,15 @@ def main():
                              "anthropic:claude-sonnet-4-6,openai:gpt-5")
     args = parser.parse_args()
 
+    if args.arena and args.continue_from:
+        config_file = args.continue_from / "config.json"
+        if config_file.exists():
+            with open(config_file) as f:
+                resume_config = json.load(f)
+            if resume_config.get("arena"):
+                args.arena_companies = int(resume_config.get("company_count") or args.arena_companies)
+
     if args.arena and args.arena_companies > 1:
-        if args.continue_from:
-            parser.error("--continue-from is not supported for multi-company arena runs yet")
         from saas_bench.agents.bash_agent.arena_runner import ArenaBashAgentRunner
 
         runner = ArenaBashAgentRunner(
@@ -1572,6 +1612,7 @@ def main():
             workspace_base=args.workspace,
             reasoning_effort=args.reasoning_effort,
             label=args.label,
+            continue_from=args.continue_from,
         )
         result = runner.run(verbose=not args.quiet)
         print(f"\nArena Result: {result['outcomes']}")

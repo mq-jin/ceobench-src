@@ -465,6 +465,7 @@ class BashAgent(BaseAgent):
         import time as _time
         import traceback
         import signal
+        import threading
         import openai
 
         LLM_WALL_CLOCK_TIMEOUT = 600  # 10min hard wall-clock limit per LLM call
@@ -519,14 +520,21 @@ class BashAgent(BaseAgent):
                     # produces real chain-of-thought in `message.reasoning`.
                     api_kwargs['extra_body'] = {'chat_template_kwargs': {'thinking': True}}
 
-                # Set hard wall-clock timeout via signal.alarm
-                old_handler = signal.signal(signal.SIGALRM, _llm_timeout_handler)
-                signal.alarm(LLM_WALL_CLOCK_TIMEOUT)
-                try:
-                    response = self.client.chat.completions.create(**api_kwargs)
-                finally:
-                    signal.alarm(0)  # Cancel alarm
-                    signal.signal(signal.SIGALRM, old_handler)  # Restore handler
+                if threading.current_thread() is threading.main_thread():
+                    # Set hard wall-clock timeout via signal.alarm. Python only
+                    # allows signal handlers in the main interpreter thread.
+                    old_handler = signal.signal(signal.SIGALRM, _llm_timeout_handler)
+                    signal.alarm(LLM_WALL_CLOCK_TIMEOUT)
+                    try:
+                        response = self.client.chat.completions.create(**api_kwargs)
+                    finally:
+                        signal.alarm(0)  # Cancel alarm
+                        signal.signal(signal.SIGALRM, old_handler)  # Restore handler
+                else:
+                    response = self.client.chat.completions.create(
+                        **api_kwargs,
+                        timeout=LLM_WALL_CLOCK_TIMEOUT,
+                    )
                 self.total_turns += 1
                 self._consecutive_errors = 0
 
@@ -704,6 +712,7 @@ class BashAgent(BaseAgent):
         import time as _time
         import traceback
         import signal
+        import threading
         import openai
 
         LLM_WALL_CLOCK_TIMEOUT = 600
@@ -758,14 +767,21 @@ class BashAgent(BaseAgent):
                 if self.reasoning_effort:
                     api_kwargs['reasoning'] = {'effort': self.reasoning_effort, 'summary': 'auto'}
 
-                # Set hard wall-clock timeout via signal.alarm
-                old_handler = signal.signal(signal.SIGALRM, _llm_timeout_handler)
-                signal.alarm(LLM_WALL_CLOCK_TIMEOUT)
-                try:
-                    response = self.client.responses.create(**api_kwargs)
-                finally:
-                    signal.alarm(0)
-                    signal.signal(signal.SIGALRM, old_handler)
+                if threading.current_thread() is threading.main_thread():
+                    # Set hard wall-clock timeout via signal.alarm. Python only
+                    # allows signal handlers in the main interpreter thread.
+                    old_handler = signal.signal(signal.SIGALRM, _llm_timeout_handler)
+                    signal.alarm(LLM_WALL_CLOCK_TIMEOUT)
+                    try:
+                        response = self.client.responses.create(**api_kwargs)
+                    finally:
+                        signal.alarm(0)
+                        signal.signal(signal.SIGALRM, old_handler)
+                else:
+                    response = self.client.responses.create(
+                        **api_kwargs,
+                        timeout=LLM_WALL_CLOCK_TIMEOUT,
+                    )
 
                 self.total_turns += 1
                 self._consecutive_errors = 0

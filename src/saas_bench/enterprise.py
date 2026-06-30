@@ -19,7 +19,10 @@ from dataclasses import dataclass, field
 from typing import Optional, Dict, List, Tuple
 from numpy.random import Generator
 
-from .config import BenchmarkConfig, MODEL_TIERS, CUSTOMER_GROUPS
+from .config import (
+    BenchmarkConfig, MODEL_TIERS, CUSTOMER_GROUPS, WEEKLY_MULTIPLIERS,
+    compute_quota_quality_factor,
+)
 from ._sql_chunk import chunked_select, chunked_execute
 
 
@@ -958,7 +961,7 @@ def get_qualities_for_all_plans_batch(
     """Batch-fetch perceived quality for all plans for multiple customers.
 
     Includes ALL terms that affect daily satisfaction: relationship bonus,
-    stickiness bonus, issue penalty, quota penalty, and ads penalty.
+    stickiness bonus, quota quality factor, issue penalty, and ads penalty.
     Returns dict mapping customer_id -> {plan -> perceived_quality}.
     """
     if not customer_ids:
@@ -998,6 +1001,7 @@ def get_qualities_for_all_plans_batch(
     # Get current day for stickiness calculation
     day_row = conn.execute("SELECT value FROM global_state WHERE key = 'current_day'").fetchone()
     current_day = int(float(day_row['value'])) if day_row else 0
+    weekly_usage_mult = WEEKLY_MULTIPLIERS[current_day % 7]
 
     # Batch-fetch customer data (relationship, open_issue_days, subscription start_day, etc.)
     rows = chunked_select(conn, """
@@ -1014,8 +1018,6 @@ def get_qualities_for_all_plans_batch(
     customer_data = {row['customer_id']: row for row in rows}
     rel_bonus_max = config.relationship_quality_bonus_max
     stickiness_log_scale = config.stickiness_log_scale
-    quota_dissat_scale = config.quota_dissatisfaction_scale
-
     # Pre-compute ads strength per group
     ads_global = config.ads_strength_global
     ads_by_group = config.ads_strength_by_group
@@ -1043,13 +1045,11 @@ def get_qualities_for_all_plans_batch(
                 # Issue penalty
                 issue_penalty = 0.03 * (cust['open_issue_days'] or 0)
 
-                # Quota penalty (use actual sampled daily_usage_rate, consistent with satisfaction)
+                # Quota quality factor (use actual sampled daily_usage_rate, consistent with satisfaction)
                 daily_usage_rate = cust['daily_usage_rate'] if cust['daily_usage_rate'] else 0.0
-                total_demand = daily_usage_rate * 30
+                total_demand = daily_usage_rate * weekly_usage_mult
                 plan_quota = plan_quotas[plan]
-                quota_penalty = 0.0
-                if plan_quota > 0 and total_demand > plan_quota:
-                    quota_penalty = quota_dissat_scale * (1.0 - plan_quota / total_demand)
+                quota_factor = compute_quota_quality_factor(plan_quota, total_demand)
 
                 # Ads penalty
                 ads_sensitivity = cust['ads_quality_sensitivity'] or 0.0
@@ -1061,7 +1061,11 @@ def get_qualities_for_all_plans_batch(
                         effective_ads = math.log(1.0 + 9.0 * strength) / math.log(10.0)
                         ads_penalty = ads_sensitivity * effective_ads
 
-                q_perceived = dq + rel_bonus + stickiness_bonus - issue_penalty - quota_penalty - ads_penalty
+                quality_before_incident_penalties = dq + rel_bonus + stickiness_bonus
+                q_perceived = (
+                    quality_before_incident_penalties * quota_factor
+                    - issue_penalty - ads_penalty
+                )
                 qualities[plan] = min(1.0, max(-1.0, q_perceived))
             else:
                 qualities[plan] = dq

@@ -49,10 +49,12 @@ def set_model_tiers(A: Optional[int] = None, B: Optional[int] = None, C: Optiona
 def set_usage_quotas(A: Optional[int] = None, B: Optional[int] = None, C: Optional[int] = None) -> Dict:
     """Set daily usage quotas for plans A, B, and C.
 
+    Exceeding quota degrades customer experience.
+
     Args:
-        A: Daily usage quota for Plan A (0 = unlimited).
-        B: Daily usage quota for Plan B (0 = unlimited).
-        C: Daily usage quota for Plan C (0 = unlimited).
+        A: Daily usage quota for Plan A.
+        B: Daily usage quota for Plan B.
+        C: Daily usage quota for Plan C.
 
     Returns:
         Dict with update confirmation.

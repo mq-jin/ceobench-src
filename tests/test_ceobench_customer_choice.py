@@ -4,7 +4,7 @@ import math
 
 import pytest
 
-from saas_bench.config import BenchmarkConfig
+from saas_bench.config import BenchmarkConfig, compute_quota_quality_factor
 
 
 def test_quality_price_curve_and_acceptance_rule(make_initialized_sim):
@@ -94,3 +94,166 @@ def test_new_customer_selects_best_plan_or_no_plan(make_initialized_sim):
         )
         is None
     )
+
+
+def _make_plan_config(quota_a):
+    return {
+        "tier_A": 4,
+        "tier_B": 4,
+        "tier_C": 4,
+        "quota_A": quota_a,
+        "quota_B": 1_000,
+        "quota_C": 1_000,
+    }
+
+
+def _create_subscribed_customer(conn, sim):
+    customer_id = sim._create_customer(sim._generate_customer_from_group("S1"))
+    sim._create_subscription(customer_id, "A", 10.0)
+    conn.execute(
+        """
+        UPDATE subscriptions
+        SET daily_usage_rate = 10.0, listed_price = 10.0, effective_price = 10.0
+        WHERE customer_id = ?
+        """,
+        (customer_id,),
+    )
+    conn.execute(
+        """
+        UPDATE customer_state
+        SET satisfaction = 0.0, relationship = 0.5, open_issue_days = 0
+        WHERE customer_id = ?
+        """,
+        (customer_id,),
+    )
+    conn.commit()
+    return customer_id
+
+
+def test_quota_quality_factor_boundaries():
+    assert compute_quota_quality_factor(0, 300) == pytest.approx(0.0)
+    assert compute_quota_quality_factor(150, 300) == pytest.approx(0.5)
+    assert compute_quota_quality_factor(300, 300) == pytest.approx(1.0)
+    assert compute_quota_quality_factor(500, 300) == pytest.approx(1.0)
+    assert compute_quota_quality_factor(0, 0) == pytest.approx(1.0)
+    assert compute_quota_quality_factor(-50, 300) == pytest.approx(0.0)
+
+
+def test_quota_factor_multiplies_scalar_perceived_quality(make_initialized_sim):
+    config = BenchmarkConfig(seed=123, base_product_quality=0.6)
+    conn, sim, _config = make_initialized_sim(config=config, seed=123)
+    customer_id = _create_subscribed_customer(conn, sim)
+
+    full_quota_config = _make_plan_config(10)
+    half_quota_config = _make_plan_config(5)
+    zero_quota_config = _make_plan_config(0)
+
+    sim._cache_step_day_globals(full_quota_config)
+    assert sim._compute_comprehensive_quality(
+        customer_id, "A", full_quota_config, overload=0.0, outage=False
+    ) == pytest.approx(0.6)
+
+    sim._cache_step_day_globals(half_quota_config)
+    assert sim._compute_comprehensive_quality(
+        customer_id, "A", half_quota_config, overload=0.0, outage=False
+    ) == pytest.approx(0.3)
+
+    sim._cache_step_day_globals(zero_quota_config)
+    assert sim._compute_comprehensive_quality(
+        customer_id, "A", zero_quota_config, overload=0.0, outage=False
+    ) == pytest.approx(0.0)
+
+
+def test_quota_factor_drives_daily_quota_event(make_initialized_sim):
+    config = BenchmarkConfig(
+        seed=123,
+        base_product_quality=0.6,
+        satisfaction_ema_alpha=1.0,
+    )
+    conn, sim, _config = make_initialized_sim(config=config, seed=123)
+    customer_id = _create_subscribed_customer(conn, sim)
+
+    half_quota_config = _make_plan_config(5)
+    sim._cache_step_day_globals(half_quota_config)
+    events = sim._update_customer_satisfaction(half_quota_config, overload=0.0, outage=False)
+
+    assert "quota" in events[customer_id]["events"]
+    assert events[customer_id]["penalties"]["quota"] == pytest.approx(0.5)
+
+    full_quota_config = _make_plan_config(10)
+    conn.execute(
+        "UPDATE customer_state SET satisfaction = 0.0 WHERE customer_id = ?",
+        (customer_id,),
+    )
+    conn.commit()
+    sim._cache_step_day_globals(full_quota_config)
+    events = sim._update_customer_satisfaction(full_quota_config, overload=0.0, outage=False)
+
+    assert "quota" not in events[customer_id]["events"]
+    assert events[customer_id]["penalties"]["quota"] == pytest.approx(0.0)
+
+
+def test_daily_usage_is_capped_by_daily_quota_not_billing_period_remaining(
+    make_initialized_sim,
+):
+    config = BenchmarkConfig(seed=123, base_product_quality=0.6)
+    conn, sim, _config = make_initialized_sim(config=config, seed=123)
+    customer_id = _create_subscribed_customer(conn, sim)
+    conn.execute(
+        """
+        UPDATE subscriptions
+        SET daily_usage_rate = 10.0, billing_period_usage = 90.0
+        WHERE customer_id = ?
+        """,
+        (customer_id,),
+    )
+    conn.commit()
+
+    total_usage, usage_per_plan = sim._compute_usage(_make_plan_config(5))
+
+    assert total_usage == 5
+    assert usage_per_plan["A"] == 5
+    assert conn.execute(
+        "SELECT usage_units FROM daily_usage WHERE customer_id = ? AND day = ?",
+        (customer_id, sim.current_day),
+    ).fetchone()["usage_units"] == 5
+    assert conn.execute(
+        "SELECT billing_period_usage FROM subscriptions WHERE customer_id = ?",
+        (customer_id,),
+    ).fetchone()["billing_period_usage"] == pytest.approx(95.0)
+
+
+def test_new_customer_plan_choice_uses_daily_quota_factor(make_initialized_sim):
+    config = BenchmarkConfig(seed=123, base_product_quality=0.6)
+    _conn, sim, _config = make_initialized_sim(config=config, seed=123)
+
+    params = {
+        "group_id": "S1",
+        "usage_demand": 10.0,
+        "seat_count": 1,
+        "steepness_left": 0.8,
+        "steepness_right": 1.6,
+        "c_max": 100.0,
+        "q_max": 0.8,
+        "q_min": 0.2,
+    }
+    plan_config = {
+        "price_A": 10.0,
+        "price_B": 10.0,
+        "price_C": 10.0,
+        "tier_A": 4,
+        "tier_B": 4,
+        "tier_C": 5,
+        "quota_A": 10,
+        "quota_B": 0,
+        "quota_C": 0,
+    }
+    sim._cache_step_day_globals(plan_config)
+
+    assert sim._choose_plan_for_customer_curve(params, plan_config) == "A"
+
+    plan_config["quota_A"] = 0
+    plan_config["quota_C"] = 10
+    sim._cache_step_day_globals(plan_config)
+
+    assert sim._choose_plan_for_customer_curve(params, plan_config) == "C"

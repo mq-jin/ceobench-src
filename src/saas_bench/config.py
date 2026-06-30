@@ -46,6 +46,14 @@ MODEL_TIERS: Dict[int, ModelTier] = {
     5: ModelTier(tier=5, unit_cost=0.030, quality_multiplier=1.10),    # ~$30.00/M tokens (o1/o3 reasoning class)
 }
 
+
+def compute_quota_quality_factor(quota: float, demand: float) -> float:
+    """Return the multiplicative quality factor from quota fulfillment."""
+    if demand <= 0:
+        return 1.0
+    quota_value = 0.0 if quota is None else max(float(quota), 0.0)
+    return max(0.0, min(1.0, quota_value / float(demand)))
+
 # =============================================================================
 # MARGIN DESIGN PHILOSOPHY
 # =============================================================================
@@ -813,7 +821,7 @@ class BenchmarkConfig:
     stickiness_log_scale: float = 0.05  # Scale of log stickiness bonus per 30 days subscribed
 
     # === QUOTA PENALTY PARAMS ===
-    quota_dissatisfaction_scale: float = 0.10  # Max penalty per unit of unfulfilled demand ratio
+    quota_dissatisfaction_scale: float = 0.10  # Legacy additive scale; retained for config compatibility
 
     # === OVERLOAD/OUTAGE SATISFACTION PENALTY (instant daily penalty before EMA) ===
     overload_satisfaction_weight: float = 0.15  # Satisfaction penalty per unit overload

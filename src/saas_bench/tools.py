@@ -2655,7 +2655,7 @@ class AgentTools:
         """Set daily usage quotas (rate limits) for plans A, B, C.
 
         Each customer on a plan can use up to this many units per day.
-        Exceeding quota degrades their experience (slower responses, errors).
+        Exceeding quota degrades their experience.
 
         Args:
             quotas: Dict with keys 'A', 'B', 'C' and integer values (units/day)
@@ -3014,7 +3014,7 @@ class AgentTools:
           • tier_A, tier_B, tier_C: Feature tiers for each plan
           • spend_advertising, spend_development, spend_operations: Daily spending amounts
           • capacity_tier: Infrastructure tier setting
-          • quota_A, quota_B, quota_C: Usage quotas for each plan
+          • quota_A, quota_B, quota_C: Daily usage quotas for each plan
 
         social_media_posts - Customer posts on social media about the service
           • post_id: Unique identifier

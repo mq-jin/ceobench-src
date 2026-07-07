@@ -50,6 +50,22 @@ def _sessions_dir() -> Path:
     return _base_dir() / "sessions"
 
 
+def _locked_api_port():
+    """Return the harness-pinned API port, if this workspace has one.
+
+    Benchmark harnesses write this file next to ``novamind-operation`` so CLI
+    commands cannot accidentally fork a second simulator by unsetting
+    NOVAMIND_API_PORT.
+    """
+    lock_path = _base_dir() / ".novamind_api_port"
+    if not lock_path.exists():
+        return None
+    try:
+        return int(lock_path.read_text().strip())
+    except ValueError:
+        return None
+
+
 def _server_cmd_prefix() -> list:
     """Command that re-enters the zipapp in server mode.
 
@@ -93,7 +109,7 @@ def _get_latest_session() -> str:
 
 
 def _resolve_session(session_id: str = None) -> str:
-    if os.environ.get("NOVAMIND_API_PORT"):
+    if os.environ.get("NOVAMIND_API_PORT") or _locked_api_port():
         return "__env__"
     if session_id:
         return session_id
@@ -116,6 +132,9 @@ def _ensure_server_running(session_id: str) -> int:
     env_port = os.environ.get("NOVAMIND_API_PORT")
     if env_port:
         return int(env_port)
+    locked_port = _locked_api_port()
+    if locked_port:
+        return locked_port
 
     sdir = _sessions_dir() / session_id
     pid_file = sdir / ".server.pid"

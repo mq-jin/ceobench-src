@@ -28,8 +28,16 @@ class Message:
     name: Optional[str] = None
 
 
-# Regex to detect dashboard in bash output (day advancement)
-_DASHBOARD_RE = re.compile(r'=== Day (\d+) Dashboard ===')
+# Regex to detect dashboard in bash output (day advancement). Keep the legacy
+# header shape for old artifacts, but the public CLI currently emits
+# ``=== Week N Dashboard (Day D) ===``.
+_DASHBOARD_RE = re.compile(
+    r'===\s*(?:Week\s+\d+\s+Dashboard\s+\(Day\s+(\d+)\)|Day\s+(\d+)\s+Dashboard)\s*==='
+)
+
+
+def _dashboard_day(match: re.Match) -> int:
+    return int(next(group for group in match.groups() if group is not None))
 
 
 class BashAgent(BaseAgent):
@@ -226,11 +234,11 @@ class BashAgent(BaseAgent):
         """
         match = _DASHBOARD_RE.search(bash_output)
         if match:
-            new_day = int(match.group(1))
+            new_day = _dashboard_day(match)
             if new_day > self.current_day:
                 self._day_advanced = True
-                # Extract dashboard from the output (everything from === Day N ===)
-                dashboard_start = bash_output.index(f"=== Day {new_day} Dashboard ===")
+                # Extract dashboard from the output.
+                dashboard_start = match.start()
                 self._new_dashboard = bash_output[dashboard_start:]
                 return True
         return False

@@ -14,6 +14,7 @@ Supports OpenAI, xAI/Grok, Anthropic (direct and Bedrock).
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -60,6 +61,32 @@ def load_env_file(env_path: Path) -> Dict[str, str]:
 
 
 ANTHROPIC_FABLE_FALLBACK_MODEL = "claude-opus-4-8"
+
+_DASHBOARD_DAY_RE = re.compile(
+    r'===\s*(?:Week\s+\d+\s+Dashboard\s+\(Day\s+(\d+)\)|Day\s+(\d+)\s+Dashboard)\s*==='
+)
+_DASHBOARD_CASH_RE = re.compile(r'^Cash:\s*\$([+-]?[0-9][0-9,]*(?:\.[0-9]+)?)', re.MULTILINE)
+_DASHBOARD_SUBSCRIBERS_RE = re.compile(r'^Individual Subscribers:\s*([0-9][0-9,]*)', re.MULTILINE)
+
+
+def _dashboard_day(match: re.Match) -> int:
+    return int(next(group for group in match.groups() if group is not None))
+
+
+def extract_dashboard_status(text: str) -> Dict[str, Any]:
+    """Extract canonical state from a dashboard string, if present."""
+    day_match = _DASHBOARD_DAY_RE.search(text or "")
+    if not day_match:
+        return {}
+
+    status: Dict[str, Any] = {"day": _dashboard_day(day_match)}
+    cash_match = _DASHBOARD_CASH_RE.search(text)
+    if cash_match:
+        status["cash"] = float(cash_match.group(1).replace(",", ""))
+    subs_match = _DASHBOARD_SUBSCRIBERS_RE.search(text)
+    if subs_match:
+        status["subscribers"] = int(subs_match.group(1).replace(",", ""))
+    return status
 
 
 class BashAgentRunner:
@@ -326,6 +353,29 @@ class BashAgentRunner:
             return self._http_post('/next-week', timeout=4200)
         except urllib.error.URLError as e:
             return {"success": False, "error": str(e)}
+
+    def _write_api_port_lock(self):
+        """Pin workspace CLI calls to this harness server.
+
+        Agents can unset environment variables inside shell commands. The public
+        CLI also reads this file, which keeps ``./novamind-operation`` attached
+        to the harness server even if a command uses ``env -u NOVAMIND_API_PORT``.
+        """
+        if self._server_port:
+            (self.agent_workspace / ".novamind_api_port").write_text(str(self._server_port))
+
+    @staticmethod
+    def _merge_observed_status(status: Dict[str, Any], observed: Dict[str, Any]) -> Dict[str, Any]:
+        """Prefer newer dashboard-observed state over stale server status."""
+        if not observed:
+            return status
+        current_day = int(status.get("day", 0) or 0)
+        observed_day = int(observed.get("day", 0) or 0)
+        if observed_day < current_day:
+            return status
+        merged = dict(status)
+        merged.update(observed)
+        return merged
 
     # =========================================================================
     # Logging
@@ -942,6 +992,7 @@ __pycache__/
 
         # ── Step 2: Launch server subprocess ──
         self._launch_server()
+        self._write_api_port_lock()
 
         # ── Step 3: Create tool executor + agent ──
         # Pass NOVAMIND_API_PORT so the CLI (./novamind-operation) connects to
@@ -1083,6 +1134,9 @@ __pycache__/
             _t0 = _time.monotonic()
             dashboard = self._get_dashboard()
             _dashboard_elapsed = _time.monotonic() - _t0
+            status = self._merge_observed_status(status, extract_dashboard_status(dashboard))
+            last_status = status
+            sim_day = status.get('day', sim_day)
             self._log_tool_result(0, sim_day, '_dashboard', {}, dashboard)
             self._log_timing("dashboard", sim_day, elapsed_s=round(_dashboard_elapsed, 3))
 
@@ -1162,6 +1216,7 @@ __pycache__/
                 _tool_elapsed = _time.monotonic() - _t0
                 _day_tool_total += _tool_elapsed
                 observation = result if isinstance(result, str) else json.dumps(result)
+                observed_status = extract_dashboard_status(observation)
 
                 self._log_timing("tool_exec", sim_day, turn=turns_today,
                                  elapsed_s=round(_tool_elapsed, 3),
@@ -1185,6 +1240,7 @@ __pycache__/
 
                 # Check server for timeout (via game-status)
                 status = self._get_game_status()
+                status = self._merge_observed_status(status, observed_status)
                 last_status = status
                 sim_day = status.get('day', sim_day)  # Update sim_day after potential next-week
                 self._commit_weeks_up_to(sim_day)  # Commit any sim-week boundary just crossed
@@ -1249,6 +1305,7 @@ __pycache__/
 
             # Get post-day status (also refresh sim_day)
             status = self._get_game_status()
+            status = self._merge_observed_status(status, extract_dashboard_status(observation))
             last_status = status
             sim_day = status.get('day', sim_day)
             self._commit_weeks_up_to(sim_day)  # Commit any sim-week boundary crossed by step_day
@@ -1329,7 +1386,10 @@ __pycache__/
         if self._server_port:
             try:
                 queried_status = self._http_get('/game-status')
-                if queried_status:
+                if (
+                    queried_status
+                    and int(queried_status.get('day', 0) or 0) >= int(final_status.get('day', 0) or 0)
+                ):
                     final_status = queried_status
                     sim_day = queried_status.get('day', sim_day)
             except Exception:

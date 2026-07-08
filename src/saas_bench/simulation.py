@@ -35,6 +35,7 @@ from .config import (
     MACRO_SENSITIVITY,
     # v2.1: Churn Reason Enum
     ChurnReason,
+    compute_quota_quality_factor,
     # v2.2: Term sheet options
 )
 from .database import (
@@ -351,13 +352,14 @@ class Simulator:
         return math.log2(n) / n
 
     def _compute_comprehensive_quality_inline(self, sub_row, plan: str, config: dict,
-                                               overload: float, outage: bool) -> float:
+                                               overload: float, outage: bool,
+                                               weekly_usage_mult: Optional[float] = None) -> float:
         """Compute perceived quality using pre-fetched row data. No DB queries. (L3)
 
         Includes ALL terms that affect daily satisfaction:
         delivered_quality = (base_product_quality + q_shared_bonus + q_group_bonus) × tier_multiplier
-        Q_perceived = delivered_quality + relationship_bonus + stickiness_bonus
-                    - issue_penalty - quota_penalty - ads_penalty
+        Q_perceived = (delivered_quality + relationship_bonus + stickiness_bonus) × quota_factor
+                    - issue_penalty - ads_penalty
 
         sub_row must have: usage_demand, seat_count, group_id, ads_quality_sensitivity,
                           relationship, start_day, daily_usage_rate, open_issue_days
@@ -385,14 +387,13 @@ class Simulator:
         # Issue penalty (unresolved support tickets)
         issue_penalty = 0.03 * (sub_row['open_issue_days'] or 0)
 
-        # Quota penalty
+        # Quota quality factor
         daily_usage_rate = sub_row['daily_usage_rate'] if sub_row['daily_usage_rate'] else 0.0
-        projected_monthly_usage = daily_usage_rate * 30
+        if weekly_usage_mult is None:
+            weekly_usage_mult, _ = self._get_cycle_multipliers(self.current_day)
+        daily_demand = daily_usage_rate * weekly_usage_mult
         plan_quota = config.get(f'quota_{plan}', 100)
-        quota_penalty = 0.0
-        if projected_monthly_usage > plan_quota:
-            fulfillment_ratio = plan_quota / projected_monthly_usage
-            quota_penalty = self.config.quota_dissatisfaction_scale * (1.0 - fulfillment_ratio)
+        quota_factor = compute_quota_quality_factor(plan_quota, daily_demand)
 
         # Ads penalty
         ads_sensitivity = sub_row['ads_quality_sensitivity'] or 0.0
@@ -405,11 +406,14 @@ class Simulator:
                 effective_ads = math.log(1.0 + 9.0 * strength) / math.log(10.0)
                 ads_penalty = ads_sensitivity * effective_ads
 
-        return q_shared + relationship_bonus + stickiness_bonus - issue_penalty - quota_penalty - ads_penalty
+        quality_before_incident_penalties = q_shared + relationship_bonus + stickiness_bonus
+        return quality_before_incident_penalties * quota_factor - issue_penalty - ads_penalty
 
     def _select_best_plan_inline(self, steepness_left: float, steepness_right: float,
                                   c_max: float, sub_row, config: dict,
-                                  overload: float, outage: bool, q_max: float = 0.75, q_min: float = 0.25) -> Optional[str]:
+                                  overload: float, outage: bool, q_max: float = 0.75,
+                                  q_min: float = 0.25,
+                                  weekly_usage_mult: Optional[float] = None) -> Optional[str]:
         """Select best plan using pre-fetched data. No DB queries. (L3)
 
         For existing users at billing day, applies promotion to evaluate plans.
@@ -433,7 +437,7 @@ class Simulator:
             promo = self._get_effective_promotion(customer_id, group_id or 'S1', plan)
             effective_price = max(0.0, price - promo)
             perceived_quality = self._compute_comprehensive_quality_inline(
-                sub_row, plan, config, overload, outage
+                sub_row, plan, config, overload, outage, weekly_usage_mult
             )
             satisfaction = self._compute_satisfaction(steepness_left, steepness_right, effective_c_max, perceived_quality, effective_price, q_max, q_min)
             if self._plan_acceptable(steepness_left, steepness_right, effective_c_max, perceived_quality, effective_price, q_max, q_min):
@@ -1126,11 +1130,12 @@ class Simulator:
         }
 
     def _compute_comprehensive_quality(self, customer_id: int, plan: str,
-                                        config: dict, overload: float, outage: bool) -> float:
+                                        config: dict, overload: float, outage: bool,
+                                        weekly_usage_mult: Optional[float] = None) -> float:
         """Compute comprehensive PERCEIVED quality for a specific customer.
 
         delivered_quality = (base_product_quality + q_shared_bonus + q_group_bonus) × tier_multiplier
-        Q_perceived = delivered_quality + bonuses - penalties
+        Q_perceived = (delivered_quality + bonuses) × quota_factor - penalties
 
         product_quality = base_product_quality + q_shared_bonus + q_group_bonus
         - base_product_quality: Starting product quality (config, default 0.50)
@@ -1144,8 +1149,8 @@ class Simulator:
         - relationship_bonus: good relationship increases perceived quality (±0.15)
         - stickiness_bonus: longer subscription increases perceived value (log growth)
 
-        Penalties:
-        - quota_penalty: when usage demand exceeds plan quota (up to 0.10)
+        Quota:
+        - quota_factor: quota / demand, clamped to [0, 1]
 
         Returns: Perceived quality
         """
@@ -1176,8 +1181,11 @@ class Simulator:
         seat_count = int(customer['seat_count'] or 1)
         relationship = customer['relationship'] if customer and customer['relationship'] else 0.5
 
-        # Projected monthly usage based on daily rate (for quota comparison)
-        projected_monthly_usage = daily_usage_rate * 30
+        # Today's quota comparison uses the sampled billing-period demand rate
+        # after the weekly usage cycle multiplier.
+        if weekly_usage_mult is None:
+            weekly_usage_mult, _ = self._get_cycle_multipliers(self.current_day)
+        daily_demand = daily_usage_rate * weekly_usage_mult
 
         # Product quality = base + accumulated improvements
         product_quality = self.config.base_product_quality + q_shared_bonus
@@ -1200,20 +1208,13 @@ class Simulator:
         # Logarithmic growth with diminishing returns: ~0.05 at 30 days, ~0.10 at 90 days, ~0.13 at 180 days
         stickiness_bonus = self.config.stickiness_log_scale * math.log(1 + days_subscribed / 30) if days_subscribed > 0 else 0.0
 
-        # Quota dissatisfaction penalty: applies when customer's usage is being throttled
-        # Based on projected monthly usage vs quota (hard cap)
+        # Quota quality factor: applies when today's usage is being throttled
         plan_quota = config.get(f'quota_{plan}', 100)  # Default to 100 if not set
-        quota_penalty = 0.0
-        if projected_monthly_usage > plan_quota:
-            # Penalty proportional to unfulfilled demand
-            # fulfillment_ratio = what they get / what they want
-            # If quota=100, demand=500: fulfillment=0.2, penalty=0.10*(1-0.2)=0.08
-            # If quota=100, demand=150: fulfillment=0.67, penalty=0.10*(1-0.67)=0.033
-            fulfillment_ratio = plan_quota / projected_monthly_usage
-            quota_penalty = self.config.quota_dissatisfaction_scale * (1.0 - fulfillment_ratio)
+        quota_factor = compute_quota_quality_factor(plan_quota, daily_demand)
 
-        # Perceived quality = delivered quality + bonuses - penalties
-        Q_perceived = q_shared + relationship_bonus + stickiness_bonus - quota_penalty
+        # Perceived quality = (delivered quality + bonuses) × quota factor
+        quality_before_quota = q_shared + relationship_bonus + stickiness_bonus
+        Q_perceived = quality_before_quota * quota_factor
 
         return Q_perceived
 
@@ -1308,6 +1309,7 @@ class Simulator:
         """
         best_plan = None
         best_satisfaction = float('-inf')
+        weekly_usage_mult, _ = self._get_cycle_multipliers(self.current_day)
 
         for plan in ['A', 'B', 'C']:
             price = config[f'price_{plan}']
@@ -1316,7 +1318,7 @@ class Simulator:
             if customer_id:
                 # _compute_comprehensive_quality handles quality computation internally
                 perceived_quality = self._compute_comprehensive_quality(
-                    customer_id, plan, config, overload, outage
+                    customer_id, plan, config, overload, outage, weekly_usage_mult
                 )
             else:
                 # For new customers without ID yet, compute perceived quality manually
@@ -1714,6 +1716,7 @@ class Simulator:
 
         # Find subscribers whose billing day is today
         billing_day = self.current_day % 30
+        weekly_usage_mult, _ = self._get_cycle_multipliers(self.current_day)
 
         # L3: Fetch all columns needed by _select_best_plan_inline (no per-customer queries)
         subscribers = self.conn.execute("""
@@ -1769,7 +1772,10 @@ class Simulator:
             q_min, q_max, c_max = self._apply_drift_offsets(sub['group_id'], q_min, q_max, c_max)
 
             # L3: Use inline version — no per-customer DB queries
-            best_plan = self._select_best_plan_inline(steepness_left, steepness_right, c_max, sub, config, overload, outage, q_max, q_min)
+            best_plan = self._select_best_plan_inline(
+                steepness_left, steepness_right, c_max, sub, config,
+                overload, outage, q_max, q_min, weekly_usage_mult
+            )
 
             if best_plan is None:
                 # No acceptable plan exists → cancel
@@ -2086,15 +2092,11 @@ class Simulator:
 
                 usage_demand = params.get('usage_demand', 50.0)
                 seat_count = int(params.get('seat_count', 1) or 1)
-                projected_monthly_usage = usage_demand * seat_count * 30
+                daily_demand = usage_demand * seat_count
                 plan_quota = config.get(f'quota_{best_plan}', 100)
 
-                quota_penalty = 0.0
-                if projected_monthly_usage > plan_quota:
-                    fulfillment_ratio = plan_quota / projected_monthly_usage
-                    quota_penalty = self.config.quota_dissatisfaction_scale * (1.0 - fulfillment_ratio)
-
-                quality = base_quality - quota_penalty
+                quota_factor = compute_quota_quality_factor(plan_quota, daily_demand)
+                quality = base_quality * quota_factor
 
                 # Initial-decision perceived-quality noise (individual customers only).
                 # Enterprise customers receive their noise during negotiation evaluations,
@@ -2114,7 +2116,9 @@ class Simulator:
                     for plan_check in ('A', 'B', 'C'):
                         tier_check = config[f'tier_{plan_check}']
                         tier_mult_check = MODEL_TIERS[tier_check].quality_multiplier
-                        q_check = product_quality * tier_mult_check
+                        plan_quota_check = config.get(f'quota_{plan_check}', 100)
+                        quota_factor_check = compute_quota_quality_factor(plan_quota_check, daily_demand)
+                        q_check = product_quality * tier_mult_check * quota_factor_check
                         q_req_at_zero = self._compute_required_quality(
                             0, steepness_left, steepness_right, c_max, q_max, q_min)
                         if q_check >= q_req_at_zero:
@@ -2407,7 +2411,10 @@ class Simulator:
             # delivered = (base_product_quality + q_shared_bonus + q_group_bonus) × tier_multiplier
             tier_multiplier = MODEL_TIERS[tier].quality_multiplier
             product_quality = _base_pq
-            quality = product_quality * tier_multiplier
+            daily_demand = params.get('usage_demand', params.get('usage_scale', 50.0)) * int(params.get('seat_count', 1) or 1)
+            plan_quota = config.get(f'quota_{plan}', 100)
+            quota_factor = compute_quota_quality_factor(plan_quota, daily_demand)
+            quality = product_quality * tier_multiplier * quota_factor
 
             # Budget constraint (use effective price after promotion)
             if effective_price > c_max:
@@ -2460,7 +2467,7 @@ class Simulator:
         quota_C = config.get('quota_C', 100)
 
         # L9: Bulk INSERT INTO daily_usage via SELECT — no Python loop needed.
-        # SQL computes: usage = ROUND(MIN(rate * mult, MAX(0, quota - cumulative)))
+        # SQL computes: usage = ROUND(MIN(today's demand, daily quota)).
         self.conn.execute("""
             INSERT INTO daily_usage (day, customer_id, usage_units)
             SELECT ?, s.customer_id,
@@ -2468,7 +2475,7 @@ class Simulator:
                        COALESCE(s.daily_usage_rate, 0.0) * ?,
                        MAX(0.0, CASE s.plan
                            WHEN 'A' THEN ? WHEN 'B' THEN ? WHEN 'C' THEN ? ELSE 100 END
-                           - COALESCE(s.billing_period_usage, 0.0))
+                       )
                    )) AS INTEGER)
             FROM subscriptions s
             WHERE s.status = 'subscribed' AND s.end_day IS NULL
@@ -2738,12 +2745,12 @@ class Simulator:
         _sat_alpha = self.config.satisfaction_ema_alpha
         _sat_1_minus_alpha = 1.0 - _sat_alpha
         _stickiness_log_scale = self.config.stickiness_log_scale
-        _quota_dissat_scale = self.config.quota_dissatisfaction_scale
         _rel_bonus_max = self.config.relationship_quality_bonus_max
         _rel_neutral = self.config.relationship_neutral_point
         _rel_scale = self.config.relationship_scale
         _pre_expiry_days = self.config.enterprise_churn_pre_expiry_days
         _current_day = self.current_day
+        _weekly_usage_mult, _ = self._get_cycle_multipliers(_current_day)
         _has_overload = overload_penalty > 0
         _has_outage = outage_penalty > 0
 
@@ -2941,16 +2948,19 @@ class Simulator:
             0.0,
         )
 
-        # Quota penalty
-        total_demand_np = daily_usage_np * 30.0
+        # Quota quality factor
+        total_demand_np = daily_usage_np * _weekly_usage_mult
         plan_quota_per_row = plan_quota_arr[plan_idx_np]
-        quota_mask = total_demand_np > plan_quota_per_row
-        safe_demand = np.where(quota_mask, total_demand_np, 1.0)
-        quota_penalty_np = np.where(
-            quota_mask,
-            _quota_dissat_scale * (1.0 - plan_quota_per_row / safe_demand),
-            0.0,
+        quota_factor_np = np.ones_like(total_demand_np, dtype=np.float64)
+        positive_demand_mask = total_demand_np > 0.0
+        np.divide(
+            np.maximum(plan_quota_per_row, 0.0),
+            total_demand_np,
+            out=quota_factor_np,
+            where=positive_demand_mask,
         )
+        quota_factor_np = np.clip(quota_factor_np, 0.0, 1.0)
+        quota_factor_loss_np = 1.0 - quota_factor_np
 
         # Ads penalty: fast path via per-group lookup, then patch the rare
         # per-customer override entries.
@@ -2963,9 +2973,10 @@ class Simulator:
                 ads_eff_per_row[idx] = math.log(1.0 + _ads_k * _str_val) / _ads_log_denom
         ads_penalty_np = ads_q_sens_np * ads_eff_per_row
 
+        quality_before_incident_penalties_np = q_shared_np + relationship_bonus_np + stickiness_bonus_np
         q_perceived_np = (
-            q_shared_np + relationship_bonus_np + stickiness_bonus_np
-            - quota_penalty_np - issue_penalty_np - ads_penalty_np
+            quality_before_incident_penalties_np * quota_factor_np
+            - issue_penalty_np - ads_penalty_np
         )
         instant_satisfaction_np = q_perceived_np - q_required_np
         new_sat_np = _sat_1_minus_alpha * old_sats_np + _sat_alpha * instant_satisfaction_np
@@ -2986,11 +2997,11 @@ class Simulator:
         old_sat_list = old_sats_np.tolist()
         sat_change_list = sat_change_np.tolist()
         issue_penalty_list = issue_penalty_np.tolist()
-        quota_penalty_list = quota_penalty_np.tolist()
+        quota_factor_loss_list = quota_factor_loss_np.tolist()
         days_sub_list = days_subscribed_np.tolist()
         seat_count_list = seat_count_np.tolist()
         has_issue_list = (issue_penalty_np > 0).tolist()
-        has_quota_list = (quota_penalty_np > 0).tolist()
+        has_quota_list = (quota_factor_np < 1.0).tolist()
         contract_locked_list = contract_locked_np.tolist()
 
         # Build sat_updates (executemany input) via single zip
@@ -3008,7 +3019,7 @@ class Simulator:
         for i in range(n):
             cid = customer_id_list[i]
             issue_pen = issue_penalty_list[i]
-            quota_pen = quota_penalty_list[i]
+            quota_loss = quota_factor_loss_list[i]
             is_locked = contract_locked_list[i]
 
             events = list(base_events)
@@ -3032,7 +3043,7 @@ class Simulator:
                     'overload': overload_penalty,
                     'outage': outage_penalty,
                     'issue': issue_pen,
-                    'quota': quota_pen,
+                    'quota': quota_loss,
                 },
             }
 
@@ -3336,6 +3347,7 @@ class Simulator:
 
         # L4: Collect batch updates for tracking state
         tracking_updates = []  # (is_acceptable, current_quality, current_satisfaction, customer_id)
+        weekly_usage_mult, _ = self._get_cycle_multipliers(self.current_day)
 
         for sub in subscribers:
             customer_id = sub['customer_id']
@@ -3352,7 +3364,7 @@ class Simulator:
 
             # L3: Compute current perceived quality using inline method (no DB queries)
             current_quality = self._compute_comprehensive_quality_inline(
-                sub, plan, config, overload, outage
+                sub, plan, config, overload, outage, weekly_usage_mult
             )
 
             # Check if plan is currently acceptable using asymmetric sigmoid curve
@@ -6169,7 +6181,7 @@ Guidelines:
                 mark_enterprise_thread_dead(self.conn, thread_id, 'timeout')
 
                 # Handle ghosting consequences by thread type
-                self._handle_ghost(thread_id, state, enterprise_churn_events)
+                self._handle_ghost(thread_id, state, enterprise_churn_events, config)
                 continue
 
             if evaluation.decision == 'accept':
@@ -6212,7 +6224,8 @@ Guidelines:
                     f'Enterprise counter-offer (Customer #{state.customer_id})'
                 )
 
-    def _handle_ghost(self, thread_id: int, state, enterprise_churn_events: list):
+    def _handle_ghost(self, thread_id: int, state, enterprise_churn_events: list,
+                      config: Optional[dict] = None):
         """Handle a customer ghosting (stopped responding after max turns).
 
         V2.1: Ghost = negotiation timeout. Same consequences as reject but
@@ -6242,7 +6255,7 @@ Guidelines:
 
             # V2.1: Detect churn reason
             ent_info = {'plan': sub['plan']} if sub else {'plan': 'A'}
-            churn_reason = self._detect_churn_reason(customer_id, ent_info)
+            churn_reason = self._detect_churn_reason(customer_id, ent_info, config)
             churn_reason_val = churn_reason.value if churn_reason else None
 
             # Cancel subscription with churn_reason
@@ -6301,7 +6314,7 @@ Guidelines:
 
             # V2.1: Detect churn reason
             ent_info = {'plan': sub['plan']} if sub else {'plan': 'A'}
-            churn_reason = self._detect_churn_reason(customer_id, ent_info)
+            churn_reason = self._detect_churn_reason(customer_id, ent_info, config)
             churn_reason_val = churn_reason.value if churn_reason else None
 
             self.conn.execute("""
@@ -6550,6 +6563,8 @@ Guidelines:
               AND s.end_day IS NULL
         """).fetchall()
 
+        weekly_usage_mult, _ = self._get_cycle_multipliers(self.current_day)
+
         for ent in enterprises:
             customer_id = ent['customer_id']
 
@@ -6602,13 +6617,11 @@ Guidelines:
             # Issue penalty (unresolved support tickets)
             issue_penalty = 0.03 * (ent['open_issue_days'] or 0)
 
-            # Quota penalty (use actual sampled daily_usage_rate, consistent with satisfaction loop)
+            # Quota quality factor (use actual sampled daily_usage_rate, consistent with satisfaction loop)
             daily_usage_rate = ent['daily_usage_rate'] if ent['daily_usage_rate'] else 0.0
-            total_demand = daily_usage_rate * 30
+            total_demand = daily_usage_rate * weekly_usage_mult
             plan_quota = config.get(f'quota_{plan}', 100) if config else 100
-            quota_penalty = 0.0
-            if total_demand > plan_quota:
-                quota_penalty = self.config.quota_dissatisfaction_scale * (1.0 - plan_quota / total_demand)
+            quota_factor = compute_quota_quality_factor(plan_quota, total_demand)
 
             # Ads penalty
             ads_sensitivity = ent['ads_quality_sensitivity'] or 0.0
@@ -6621,7 +6634,8 @@ Guidelines:
                     effective_ads = math.log(1.0 + 9.0 * strength) / math.log(10.0)
                     ads_penalty = ads_sensitivity * effective_ads
 
-            quality = q_shared + rel_bonus + stickiness_bonus - issue_penalty - quota_penalty - ads_penalty
+            quality_before_incident_penalties = q_shared + rel_bonus + stickiness_bonus
+            quality = quality_before_incident_penalties * quota_factor - issue_penalty - ads_penalty
 
             # Get asymmetric sigmoid params (use drifted values + drift offsets)
             steepness_left = ent['current_steepness_left'] or ent['initial_steepness_left']
@@ -6715,12 +6729,11 @@ Guidelines:
             if self._cached_q_group_bonus and group_id_pc in self._cached_q_group_bonus:
                 q_shared += self._cached_q_group_bonus[group_id_pc] * self._cached_tier_multiplier_per_plan.get(plan, 1.0)
             daily_usage_rate_pc = ent['daily_usage_rate'] if ent['daily_usage_rate'] else 0.0
-            total_demand = daily_usage_rate_pc * 30
+            total_demand = daily_usage_rate_pc * weekly_usage_mult
             plan_quota = config.get(f'quota_{plan}', 100) if config else 100
-            quota_penalty = 0.0
-            if total_demand > plan_quota:
-                quota_penalty = self.config.quota_dissatisfaction_scale * (1.0 - plan_quota / total_demand)
-            quality = q_shared + rel_bonus + stickiness_bonus - issue_penalty - quota_penalty - ads_penalty
+            quota_factor = compute_quota_quality_factor(plan_quota, total_demand)
+            quality_before_incident_penalties = q_shared + rel_bonus + stickiness_bonus
+            quality = quality_before_incident_penalties * quota_factor - issue_penalty - ads_penalty
             satisfaction = self._compute_satisfaction(steepness_left, steepness_right, c_max, quality, list_price, q_max, q_min)
 
             # Check participation constraint (satisfaction > 0 means acceptable)
@@ -6890,7 +6903,7 @@ Guidelines:
 
             # No active renewal thread (never created, or timed out) — churn
             # Detect churn reason
-            churn_reason = self._detect_churn_reason(customer_id, ent)
+            churn_reason = self._detect_churn_reason(customer_id, ent, config)
 
             # Cancel subscription
             churn_reason_val = churn_reason.value if churn_reason else None
@@ -6907,11 +6920,12 @@ Guidelines:
                 f'Contract expired: customer lost'
             )
 
-    def _detect_churn_reason(self, customer_id: int, ent: dict) -> 'ChurnReason':
+    def _detect_churn_reason(self, customer_id: int, ent: dict,
+                             config: Optional[dict] = None) -> 'ChurnReason':
         """V2.1: Classify the primary churn reason for an enterprise customer.
 
         Examines simulation state to determine why the customer is churning:
-        - QUOTA_CHANGE: usage exceeds plan quota (billing_period_usage high)
+        - QUOTA_CHANGE: sampled daily usage demand exceeds plan quota
         - RELIABILITY_CHANGE: recent overload/outage events degraded service
         - QUALITY_CHANGE: model quality insufficient vs customer expectations
         - PRICE_SENSITIVITY: c_max decreased relative to current price (budget shock)
@@ -6957,15 +6971,17 @@ Guidelines:
         if recent_overload > 0.3 or recent_outage:
             return ChurnReason.RELIABILITY_CHANGE
 
-        # Check quota usage
+        # Check quota pressure against the current daily quota.
         sub = self.conn.execute("""
-            SELECT billing_period_usage, plan FROM subscriptions
+            SELECT daily_usage_rate, plan FROM subscriptions
             WHERE customer_id = ? AND status = 'subscribed' AND end_day IS NULL
         """, (customer_id,)).fetchone()
         if sub:
-            plan_tier = getattr(self.config, f'tier_{sub["plan"]}', 1)
-            quota = self.config.quota_per_tier.get(plan_tier, 50000) if hasattr(self.config, 'quota_per_tier') else 50000
-            if sub['billing_period_usage'] and sub['billing_period_usage'] > quota * 0.9:
+            cfg = config or self.get_current_config()
+            quota_key = f'quota_{sub["plan"]}'
+            quota = cfg.get(quota_key, 0) if cfg else 0
+            daily_usage_rate = sub['daily_usage_rate'] if sub['daily_usage_rate'] else 0.0
+            if daily_usage_rate > quota:
                 return ChurnReason.QUOTA_CHANGE
 
         # Default to price sensitivity
@@ -7635,4 +7651,3 @@ Guidelines:
             cash=cash,
             mrr=mrr,
         )
-

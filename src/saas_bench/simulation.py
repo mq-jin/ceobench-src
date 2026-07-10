@@ -6656,7 +6656,10 @@ Guidelines:
 
             # Check plan_change only if in churn window
             if in_churn_window:
-                self._check_plan_change_opportunity(customer_id, ent, quality, steepness_left, steepness_right, c_max, config, q_max, q_min)
+                self._check_plan_change_opportunity(
+                    customer_id, ent, quality, steepness_left, steepness_right,
+                    c_max, config, q_max, q_min, weekly_usage_mult,
+                )
 
     def _create_churn_prevention_thread(self, customer_id: int, ent: dict):
         """Create a churn prevention thread for an enterprise customer."""
@@ -6679,7 +6682,9 @@ Guidelines:
 
     def _check_plan_change_opportunity(
         self, customer_id: int, ent: dict, current_quality: float,
-        steepness_left: float, steepness_right: float, c_max: float, config: dict, q_max: float = 0.75, q_min: float = 0.25
+        steepness_left: float, steepness_right: float, c_max: float, config: dict,
+        q_max: float = 0.75, q_min: float = 0.25,
+        weekly_usage_mult: Optional[float] = None,
     ):
         """Check if another plan would give better satisfaction for the customer.
 
@@ -6689,6 +6694,9 @@ Guidelines:
         current_plan = ent['plan']
         current_price = ent['listed_price']
         current_satisfaction = self._compute_satisfaction(steepness_left, steepness_right, c_max, current_quality, current_price, q_max, q_min)
+
+        if weekly_usage_mult is None:
+            weekly_usage_mult, _ = self._get_cycle_multipliers(self.current_day)
 
         best_plan = current_plan
         best_satisfaction = current_satisfaction

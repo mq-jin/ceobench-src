@@ -164,6 +164,49 @@ def test_quota_factor_multiplies_scalar_perceived_quality(make_initialized_sim):
     ) == pytest.approx(0.0)
 
 
+def test_enterprise_plan_change_uses_weekly_quota_multiplier(
+    make_initialized_sim, monkeypatch
+):
+    config = BenchmarkConfig(seed=123, base_product_quality=0.6)
+    _conn, sim, _config = make_initialized_sim(config=config, seed=123)
+    plan_config = {
+        "price_A": 10.0,
+        "price_B": 25.0,
+        "price_C": 40.0,
+        "tier_A": 4,
+        "tier_B": 4,
+        "tier_C": 4,
+        "quota_A": 10,
+        "quota_B": 20,
+        "quota_C": 30,
+    }
+    sim._cache_step_day_globals(plan_config)
+    monkeypatch.setattr(sim, "_create_plan_change_thread", lambda *args: None)
+
+    enterprise = {
+        "plan": "A",
+        "listed_price": 10.0,
+        "relationship": 0.5,
+        "start_day": 0,
+        "open_issue_days": 0,
+        "ads_quality_sensitivity": 0.0,
+        "group_id": "E1",
+        "daily_usage_rate": 10.0,
+    }
+
+    sim._check_plan_change_opportunity(
+        customer_id=1,
+        ent=enterprise,
+        current_quality=0.6,
+        steepness_left=0.8,
+        steepness_right=1.6,
+        c_max=100.0,
+        config=plan_config,
+        q_max=0.8,
+        q_min=0.2,
+    )
+
+
 def test_quota_factor_drives_daily_quota_event(make_initialized_sim):
     config = BenchmarkConfig(
         seed=123,

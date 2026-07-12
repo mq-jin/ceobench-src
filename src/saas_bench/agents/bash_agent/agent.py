@@ -75,12 +75,12 @@ class BashAgent(BaseAgent):
         self.use_portkey = client_type == 'Portkey'
 
         # Detect if the endpoint supports OpenAI Responses API.
-        # Only OpenAI's own endpoint implements /v1/responses. Google's OpenAI-compat
-        # and Together AI only expose /v1/chat/completions. Portkey AI Gateway
-        # forwards to OpenAI for gpt-* models so /v1/responses works there too —
+        # Only OpenAI's own endpoint implements /v1/responses. Google's OpenAI-compat,
+        # Together AI, and OpenRouter only expose /v1/chat/completions. Portkey AI
+        # Gateway forwards to OpenAI for gpt-* models so /v1/responses works there too —
         # in fact, gpt-5.x with reasoning_effort + tools REQUIRES /v1/responses.
         base_url = str(getattr(client, 'base_url', '') or '')
-        _non_responses_hosts = ('generativelanguage.googleapis.com', 'api.together.xyz')
+        _non_responses_hosts = ('generativelanguage.googleapis.com', 'api.together.xyz', 'openrouter.ai')
         self.supports_responses_api = not any(h in base_url for h in _non_responses_hosts)
 
         # Build system prompt

@@ -85,6 +85,35 @@ enterprise_llm_provider: str = "anthropic"
 enterprise_llm_model: str = "claude-sonnet-4-5"
 ```
 
+**Option C: OpenRouter for all models**
+
+OpenRouter exposes an OpenAI-compatible endpoint, so the simulator roles use
+provider `"openai"` (their calls are routed to `chat/completions` automatically
+whenever the client's base URL is not OpenAI's own) and the agent uses the
+dedicated `openrouter` provider. Use OpenRouter model identifiers
+(`vendor/model`) everywhere.
+
+```bash
+export OPENROUTER_API_KEY="sk-or-..."
+```
+
+```python
+agent_llm_provider: str = "openrouter"
+agent_llm_model: str = "anthropic/claude-opus-4.8"  # any OpenRouter model id
+
+social_post_llm_provider: str = "openai"
+social_post_llm_model: str = "anthropic/claude-haiku-4.5"
+
+enterprise_llm_provider: str = "openai"
+enterprise_llm_model: str = "anthropic/claude-sonnet-4.5"
+```
+
+With only `OPENROUTER_API_KEY` set, the simulator's OpenAI-compatible client
+automatically points at `https://openrouter.ai/api/v1`. Setting
+`OPENAI_API_KEY` / `OPENAI_BASE_URL` explicitly takes precedence. For the
+bash agent, `--provider openrouter --model vendor/model` works directly, and
+`--base-url` can override the endpoint.
+
 The LLM config fields are:
 
 - `agent_llm_provider`, `agent_llm_model`, `agent_llm_reasoning_effort`

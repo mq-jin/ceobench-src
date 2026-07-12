@@ -200,6 +200,8 @@ class BashAgentRunner:
             self.api_key = env_vars.get("TOGETHER_API_KEY") or os.environ.get("TOGETHER_API_KEY")
         elif provider == "ai_sandbox":
             self.api_key = env_vars.get("AI_SANDBOX_KEY") or os.environ.get("AI_SANDBOX_KEY")
+        elif provider == "openrouter":
+            self.api_key = env_vars.get("OPENROUTER_API_KEY") or os.environ.get("OPENROUTER_API_KEY")
         else:
             self.api_key = env_vars.get("OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY")
 
@@ -216,6 +218,8 @@ class BashAgentRunner:
             self.base_url = os.environ.get("MODAL_BASE_URL")
         elif provider == "together":
             self.base_url = "https://api.together.xyz/v1"
+        elif provider == "openrouter":
+            self.base_url = "https://openrouter.ai/api/v1"
         else:
             self.base_url = None
 

@@ -149,3 +149,8 @@ cleanup_wiki_layout.py
 rename_to_bossbench.py
 upload_diagrams_to_notion.py
 core.*
+
+# local benchmark run outputs
+bash_agent_runs/
+claude_code_runs/
+forecast_log.csv

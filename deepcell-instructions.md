@@ -26,9 +26,12 @@ Re-running it for the same week is safe and re-prints fresh numbers.
 
 ## Prime directive
 
-Finish the game: advance the simulation with `next-week` in EVERY prompt.
-The model supports decisions — never let modeling block the game. If the
-script or a deepcell command errors twice, continue the week without it.
+Advance the simulation exactly ONCE per prompt, then END YOUR TURN — the
+harness prompts you again for each new week with a fresh dashboard. Never
+play multiple weeks in one turn (the advance gate hard-refuses any week
+other than the current one). The model supports decisions — never let
+modeling block the game. If the script or a deepcell command errors twice,
+continue the week without it.
 
 ## Weekly loop (every prompt)
 
@@ -70,6 +73,8 @@ script or a deepcell command errors twice, continue the week without it.
    Use single quotes around the rationale (dollar amounts inside double
    quotes get mangled by the shell). If it prints BLOCKED, do what it says
    and re-run — the simulator was not touched.
+7. **Stop.** Once the advance succeeds, end your turn immediately — do NOT
+   start the next week; you'll be prompted for it.
 
 ## Rules
 

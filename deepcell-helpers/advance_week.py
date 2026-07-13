@@ -43,6 +43,15 @@ def main():
     rationale = sys.argv[2]
     raw_nums = sys.argv[3:15]
 
+    # --- one advance per harness turn ------------------------------------
+    turn_week = os.environ.get("CEOBENCH_TURN_WEEK")
+    if turn_week and week != int(turn_week):
+        fail(
+            f"this turn may only advance week {turn_week} (you asked for week "
+            f"{week}). One week per prompt: after week {turn_week} advances, "
+            f"END YOUR TURN — the harness will prompt you for the next week."
+        )
+
     # --- validate the 12 forecasts -------------------------------------
     try:
         nums = [float(x.replace(",", "")) for x in raw_nums]

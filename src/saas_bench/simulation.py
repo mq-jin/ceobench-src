@@ -4088,28 +4088,18 @@ class Simulator:
                 try:
                     config = self.config
                     social_model = config.social_post_llm_model
-                    social_provider = config.social_post_llm_provider
 
-                    if social_provider in ("bedrock", "anthropic"):
-                        llm_response = self.customer_simulator.social_post_client.messages.create(
-                            model=social_model,
-                            max_tokens=300,
-                            temperature=config.social_media_temperature,
-                            system="You are a social media content generator simulating realistic business professionals posting about economic conditions.",
-                            messages=[{"role": "user", "content": item['prompt']}],
-                        )
-                        text = llm_response.content[0].text.strip()
-                    else:
-                        llm_response = self.customer_simulator.client.responses.create(
-                            model=social_model,
-                            reasoning={"effort": "low"},
-                            input=[
-                                {"role": "system", "content": "You are a social media content generator simulating realistic business professionals posting about economic conditions."},
-                                {"role": "user", "content": item['prompt']}
-                            ],
-                            max_output_tokens=300,
-                        )
-                        text = llm_response.output_text.strip()
+                    # social_post_client presents the Anthropic .messages
+                    # interface for every provider (openai goes through the
+                    # _OpenAIAnthropicShim, incl. OpenRouter endpoints).
+                    llm_response = self.customer_simulator.social_post_client.messages.create(
+                        model=social_model,
+                        max_tokens=300,
+                        temperature=config.social_media_temperature,
+                        system="You are a social media content generator simulating realistic business professionals posting about economic conditions.",
+                        messages=[{"role": "user", "content": item['prompt']}],
+                    )
+                    text = llm_response.content[0].text.strip()
 
                     # Clean: strip numbering/bullets if LLM added them
                     import re
@@ -4255,28 +4245,18 @@ class Simulator:
                 try:
                     config = self.config
                     social_model = config.social_post_llm_model
-                    social_provider = config.social_post_llm_provider
 
-                    if social_provider in ("bedrock", "anthropic"):
-                        llm_response = self.customer_simulator.social_post_client.messages.create(
-                            model=social_model,
-                            max_tokens=300,
-                            temperature=config.social_media_temperature,
-                            system="You are a social media content generator simulating realistic business professionals posting about economic conditions.",
-                            messages=[{"role": "user", "content": item['prompt']}],
-                        )
-                        text = llm_response.content[0].text.strip()
-                    else:
-                        llm_response = self.customer_simulator.client.responses.create(
-                            model=social_model,
-                            reasoning={"effort": "low"},
-                            input=[
-                                {"role": "system", "content": "You are a social media content generator simulating realistic business professionals posting about economic conditions."},
-                                {"role": "user", "content": item['prompt']}
-                            ],
-                            max_output_tokens=300,
-                        )
-                        text = llm_response.output_text.strip()
+                    # social_post_client presents the Anthropic .messages
+                    # interface for every provider (openai goes through the
+                    # _OpenAIAnthropicShim, incl. OpenRouter endpoints).
+                    llm_response = self.customer_simulator.social_post_client.messages.create(
+                        model=social_model,
+                        max_tokens=300,
+                        temperature=config.social_media_temperature,
+                        system="You are a social media content generator simulating realistic business professionals posting about economic conditions.",
+                        messages=[{"role": "user", "content": item['prompt']}],
+                    )
+                    text = llm_response.content[0].text.strip()
 
                     import re
                     text = re.sub(r'^\d+[\.\)]\s*', '', text).strip()

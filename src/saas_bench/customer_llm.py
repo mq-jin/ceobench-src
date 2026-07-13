@@ -13,10 +13,64 @@ Both default to AWS Bedrock, but can fall back to OpenAI if configured.
 import sqlite3
 import json
 import random as _random
+from types import SimpleNamespace
 from typing import Optional, Dict, Any, List
 from dataclasses import dataclass
 
 from openai import OpenAI
+
+
+class _OpenAIAnthropicShim:
+    """Anthropic-style ``.messages.create()`` facade over an OpenAI client.
+
+    Simulator call sites written against Bedrock/Anthropic clients read
+    ``response.content[0].text`` and ``response.usage.input_tokens`` /
+    ``output_tokens``. This shim lets those sites run unchanged when the
+    social/enterprise provider is "openai" — OpenAI proper (Responses API)
+    or any OpenAI-compatible endpoint such as OpenRouter (chat completions).
+    """
+
+    class _Messages:
+        def __init__(self, client):
+            self._client = client
+
+        def create(self, *, model, max_tokens, messages, system=None,
+                   temperature=None, **_ignored):
+            chat_messages = (
+                [{"role": "system", "content": system}] if system else []
+            ) + list(messages)
+            base_url = str(getattr(self._client, "base_url", "") or "")
+            if "api.openai.com" in base_url:
+                response = self._client.responses.create(
+                    model=model,
+                    input=chat_messages,
+                    max_output_tokens=max_tokens,
+                )
+                text = response.output_text
+                in_tok = response.usage.input_tokens
+                out_tok = response.usage.output_tokens
+            else:
+                kwargs = {}
+                if temperature is not None:
+                    kwargs["temperature"] = temperature
+                response = self._client.chat.completions.create(
+                    model=model,
+                    messages=chat_messages,
+                    max_tokens=max_tokens,
+                    **kwargs,
+                )
+                text = response.choices[0].message.content or ""
+                in_tok = response.usage.prompt_tokens
+                out_tok = response.usage.completion_tokens
+            return SimpleNamespace(
+                content=[SimpleNamespace(text=text)],
+                usage=SimpleNamespace(
+                    input_tokens=in_tok, output_tokens=out_tok
+                ),
+            )
+
+    def __init__(self, client):
+        self.messages = self._Messages(client)
 
 from .config import BenchmarkConfig, CUSTOMER_GROUPS, ChurnReason
 from .database import (
@@ -194,9 +248,13 @@ class CustomerSimulator:
             return self.bedrock_client
         if provider == "anthropic":
             return self.anthropic_client
+        if provider == "openai":
+            # Anthropic-interface facade over the OpenAI-compatible client so
+            # .messages.create() call sites work unchanged (incl. OpenRouter).
+            return _OpenAIAnthropicShim(self.client)
         raise ValueError(
-            f"social_post_client only supports 'bedrock' or 'anthropic'; got {provider!r}. "
-            f"For OpenAI, dispatch via self.client.responses.create()."
+            f"social_post_client only supports 'bedrock', 'anthropic', or 'openai'; "
+            f"got {provider!r}."
         )
 
     def _openai_text(self, model, system_prompt, user_prompt, max_output_tokens, effort=None):

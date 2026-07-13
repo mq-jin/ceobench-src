@@ -26,8 +26,11 @@ business analysis.
    capacity, dev/ops spend, targeted ads, promotions, enterprise responses).
    Think in unit economics: margin per subscriber per segment, payback on
    quality/dev spend, runway.
-3. **Update the model & record the decision** — the capped ritual below,
-   **at most 4 commands**.
+3. **Update the model & record the decision** — the ritual below, typically
+   ~4 commands. More is fine when the week warrants it — especially to
+   **record your thinking** (extra claims, assumptions, evidence, argument
+   edges for a nontrivial decision). What to avoid is mechanical repetition
+   (re-rolling an already-calibrated model, redundant queries), not depth.
 4. **Advance exactly once, then END YOUR TURN** — the harness prompts you
    again next week (the advance gate hard-refuses any other week).
 
@@ -48,7 +51,7 @@ A driver-based cash model is ALREADY SEEDED in your deepcell workspace
   `StartingCash` = $1,000,000). `LedgerCash` = realized truth anchor.
 - Scenarios `low` / `high`: your 95% band, as driver overrides.
 
-## The capped ritual (≤4 commands, step 3 above)
+## The ritual (step 3 above — lean by default, deep when it matters)
 
 1. **Roll actuals + read forecasts — ONE call** (skip in the very first
    prompt):
@@ -67,14 +70,20 @@ A driver-based cash model is ALREADY SEEDED in your deepcell workspace
    your honest mean; uncertainty lives in the band. (If drivers changed,
    re-run roll_week once to reprint the 12 numbers — that re-run replaces
    this slot's budget, don't also do a third.)
-3. **One claim (+ its link)** — the decision record the gate checks:
+3. **Record the decision** — the record the gate checks, and your audit
+   trail. At minimum one claim:
    `deepcell reasoning add-claim novamind.deepcell --id wk<N>_<slug>
    --kind thesis|risk|catalyst --label "..." --body "decision + why"
    --item-refs <Driver1,Driver2>` (`risk` needs `--probability` +
    `--severity`; `catalyst` needs `--probability`). From week 2 on also:
    `deepcell reasoning add-argument novamind.deepcell --from-id wk<N>_<slug>
-   --to-id <prior> --rel supports|refutes|supersedes|depends_on`. When
-   actuals falsify an earlier claim, supersede it — never delete.
+   --to-id <prior> --rel supports|refutes|supersedes|depends_on`.
+   For nontrivial decisions, capture the actual thinking — the alternatives
+   you weighed, the evidence, the assumptions it rests on — with extra
+   nodes: `add-assumption` / `add-evidence` and more claims/edges (risks
+   with probability × severity, catalysts you're betting on). When actuals
+   falsify an earlier claim, supersede it — never delete; the graph is how
+   you avoid repeating a bad bet.
 4. **Advance — ONLY via the gate wrapper** (never call
    `./novamind-operation next-week` directly):
 

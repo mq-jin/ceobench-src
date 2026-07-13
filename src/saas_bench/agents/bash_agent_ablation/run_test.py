@@ -1330,7 +1330,7 @@ def main():
     parser = argparse.ArgumentParser(description="Run bash agent for SaaS Bench")
     parser.add_argument("--model", default="gpt-4o", help="Model name")
     parser.add_argument("--provider", default="openai",
-                        choices=["openai", "xai", "google", "anthropic", "bedrock", "modal", "together", "ai_sandbox"],
+                        choices=["openai", "xai", "google", "anthropic", "bedrock", "modal", "together", "ai_sandbox", "openrouter"],
                         help="API provider")
     parser.add_argument("--base-url", help="Custom API base URL")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")

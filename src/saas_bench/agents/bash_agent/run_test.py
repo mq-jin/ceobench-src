@@ -1385,7 +1385,7 @@ def main():
     parser.add_argument("--model", default=None,
                         help=f"Model name (default: BenchmarkConfig.agent_llm_model={default_config.agent_llm_model})")
     parser.add_argument("--provider", default=None,
-                        choices=["openai", "xai", "google", "anthropic", "bedrock", "modal", "together", "ai_sandbox"],
+                        choices=["openai", "xai", "google", "anthropic", "bedrock", "modal", "together", "ai_sandbox", "openrouter"],
                         help=f"API provider (default: BenchmarkConfig.agent_llm_provider={default_config.agent_llm_provider})")
     parser.add_argument("--base-url", help="Custom API base URL")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")

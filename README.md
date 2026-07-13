@@ -217,6 +217,51 @@ If you edit `src/saas_bench/config.py`, rebuild the bundle the agent sees with
 `uv run python scripts/build_public.py` before launching.
 
 
+### 🧮 Option D (this fork): Claude Code + DeepCell decision-support
+
+This fork adds a harness that plays CEO-Bench with a local **Claude Code** CLI
+as the agent and a **[DeepCell](https://deepcell.net)** model as its
+forecasting engine and decision log. The agent keeps a dependency-tracked cash
+model (`novamind.deepcell`) in a deepcell workspace: driver values are its
+forecast beliefs, `EndingCash` is computed by the calc engine, completed weeks
+are rolled to ledger actuals, the 95% band lives in `low`/`high` scenarios,
+and every weekly decision is recorded as a claim in the model's typed
+reasoning graph.
+
+**Prerequisites:** `claude` (Claude Code CLI, authenticated) and `deepcell`
+(CLI, logged in to a Jingwei API) on PATH, plus the simulator credentials from
+the Setup section (e.g. `OPENROUTER_API_KEY`).
+
+**Pieces** (all in [`deepcell-helpers/`](deepcell-helpers/) +
+[`deepcell-instructions.md`](deepcell-instructions.md)):
+
+| Piece | Role |
+|---|---|
+| `gen_model.py` | Seeds the default cash model (weekly contexts, 10 drivers, `NetCashFlow`/`EndingCash` CalcDefs, `LedgerCash` truth anchor, `low`/`high` scenarios) into the active deepcell workspace. Re-run before every fresh game. |
+| `roll_week.py <week>` | Rolls a completed week from forecast to actual: pulls per-category ledger sums from the sim into the model, logs forecast-vs-actual to `forecast_log.csv`, prints the 12-number `next-week` payload (point/low/high at +1/+4/+12/+26 weeks). |
+| `advance_week.py <week> '<rationale>' <12 numbers>` | **Reasoning gate.** Refuses to advance unless the reasoning graph has a `wk<N>_*` claim for the week (and, from week 2 on, an argument edge linking it to prior reasoning), and the forecast triples are ordered `low <= point <= high`. Only then does it call `./novamind-operation next-week`. |
+| `deepcell-instructions.md` | The weekly playbook appended to the agent's generated `CLAUDE.md` via `CEOBENCH_EXTRA_INSTRUCTIONS`. |
+
+**Launch:**
+
+```bash
+uv sync
+export OPENROUTER_API_KEY="sk-or-..."            # simulator roles (see Option C above)
+export NMDB_KEY=<key from KEYS.md>               # claude_code runner requirement
+export DEEPCELL_WORKSPACE=ceo-bench              # dedicated deepcell workspace
+
+python3 deepcell-helpers/gen_model.py --weeks 72          # seed a fresh model
+
+CEOBENCH_EXTRA_INSTRUCTIONS=$PWD/deepcell-instructions.md \
+uv run python -m saas_bench.agents.claude_code.run_test \
+    --days 500 --seed 42 --workspace claude_code_runs
+```
+
+Each run leaves three audit artifacts: the standard `world.nmdb` ledger, the
+versioned `novamind.deepcell` (drivers, forecasts, and a claim-per-decision
+reasoning graph with `supersedes` edges when the strategy pivots), and
+`forecast_log.csv` (forecast-vs-actual calibration per week).
+
 
 ## 📈 Analyzing agent trajectory
 

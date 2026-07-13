@@ -146,9 +146,10 @@ def _apply_simulator_llm_config(config: BenchmarkConfig) -> dict:
     if (
         config.social_post_llm_provider == "openai"
         or config.enterprise_llm_provider == "openai"
-    ) and not os.environ.get("OPENAI_API_KEY"):
+    ) and not (os.environ.get("OPENAI_API_KEY") or os.environ.get("OPENROUTER_API_KEY")):
         print(
-            "Error: simulator OpenAI provider requires OPENAI_API_KEY. "
+            "Error: simulator OpenAI provider requires OPENAI_API_KEY "
+            "(or OPENROUTER_API_KEY to route via OpenRouter). "
             "It does not use agent-only credentials such as --api-key.",
             file=sys.stderr,
         )

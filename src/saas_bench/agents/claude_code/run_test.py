@@ -591,6 +591,10 @@ class ClaudeCodeCLIRunner:
 
         while sim_day < self.total_days:
             week_idx = sim_day // 7 + 1
+            # One-week-per-turn contract: deepcell-helpers/advance_week.py
+            # refuses to advance any week other than this one (the env is
+            # inherited by the claude -p subprocess via os.environ.copy()).
+            os.environ["CEOBENCH_TURN_WEEK"] = str(week_idx)
             dashboard = self._get_dashboard()
 
             base_prompt = (

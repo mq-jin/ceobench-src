@@ -217,6 +217,8 @@ class BashAgentRunner:
             self.api_key = env_vars.get("TOGETHER_API_KEY") or os.environ.get("TOGETHER_API_KEY")
         elif self.provider == "ai_sandbox":
             self.api_key = env_vars.get("AI_SANDBOX_KEY") or os.environ.get("AI_SANDBOX_KEY")
+        elif self.provider == "openrouter":
+            self.api_key = env_vars.get("OPENROUTER_API_KEY") or os.environ.get("OPENROUTER_API_KEY")
         else:
             self.api_key = env_vars.get("OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY")
 
@@ -233,6 +235,8 @@ class BashAgentRunner:
             self.base_url = os.environ.get("MODAL_BASE_URL")
         elif self.provider == "together":
             self.base_url = "https://api.together.xyz/v1"
+        elif self.provider == "openrouter":
+            self.base_url = "https://openrouter.ai/api/v1"
         else:
             self.base_url = None
 
@@ -1381,7 +1385,7 @@ def main():
     parser.add_argument("--model", default=None,
                         help=f"Model name (default: BenchmarkConfig.agent_llm_model={default_config.agent_llm_model})")
     parser.add_argument("--provider", default=None,
-                        choices=["openai", "xai", "google", "anthropic", "bedrock", "modal", "together", "ai_sandbox"],
+                        choices=["openai", "xai", "google", "anthropic", "bedrock", "modal", "together", "ai_sandbox", "openrouter"],
                         help=f"API provider (default: BenchmarkConfig.agent_llm_provider={default_config.agent_llm_provider})")
     parser.add_argument("--base-url", help="Custom API base URL")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")

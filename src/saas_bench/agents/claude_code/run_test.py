@@ -428,6 +428,19 @@ class ClaudeCodeCLIRunner:
             "{total_years}", f"{self.total_days / 365:.1f}"
         )
 
+        # Operator-supplied extra instructions (e.g. an external decision-support
+        # tool available on the host). Appended verbatim to CLAUDE.md; the same
+        # {total_days}/{total_weeks}/{total_years} placeholders are resolved.
+        extra_path = os.environ.get("CEOBENCH_EXTRA_INSTRUCTIONS")
+        if extra_path:
+            extra = Path(extra_path).read_text()
+            extra = (
+                extra.replace("{total_days}", str(self.total_days))
+                .replace("{total_weeks}", str((self.total_days + 6) // 7))
+                .replace("{total_years}", f"{self.total_days / 365:.1f}")
+            )
+            body += "\n\n" + extra
+
         (self.agent_workspace / "CLAUDE.md").write_text(body)
 
     def _save_config(self) -> None:

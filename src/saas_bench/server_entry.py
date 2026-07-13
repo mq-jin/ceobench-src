@@ -146,9 +146,10 @@ def _apply_simulator_llm_config(config: BenchmarkConfig) -> dict:
     if (
         config.social_post_llm_provider == "openai"
         or config.enterprise_llm_provider == "openai"
-    ) and not os.environ.get("OPENAI_API_KEY"):
+    ) and not (os.environ.get("OPENAI_API_KEY") or os.environ.get("OPENROUTER_API_KEY")):
         print(
-            "Error: simulator OpenAI provider requires OPENAI_API_KEY. "
+            "Error: simulator OpenAI provider requires OPENAI_API_KEY "
+            "(or OPENROUTER_API_KEY to route via OpenRouter). "
             "It does not use agent-only credentials such as --api-key.",
             file=sys.stderr,
         )
@@ -173,6 +174,15 @@ def _create_simulator_openai_client(config: BenchmarkConfig):
         return None
 
     from openai import OpenAI
+
+    # OPENAI_API_KEY / OPENAI_BASE_URL take precedence (the SDK reads both from
+    # the environment). With only OPENROUTER_API_KEY set, route the simulator
+    # LLM calls through OpenRouter's OpenAI-compatible endpoint.
+    if not os.environ.get("OPENAI_API_KEY") and os.environ.get("OPENROUTER_API_KEY"):
+        return OpenAI(
+            api_key=os.environ["OPENROUTER_API_KEY"],
+            base_url=os.environ.get("OPENAI_BASE_URL", "https://openrouter.ai/api/v1"),
+        )
 
     return OpenAI()
 

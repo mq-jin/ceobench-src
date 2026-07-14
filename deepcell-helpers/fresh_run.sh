@@ -3,9 +3,7 @@
 # from previous games:
 #   1. restores the shared helper scripts + instructions to their committed
 #      versions (a prior run's agent may have edited them — it happened);
-#   2. deletes old runs' Claude Code auto-memory dirs (never auto-loaded by a
-#      new run, which gets its own project path — pure hygiene);
-#   3. creates a brand-new deepcell workspace (old workspaces keep their
+#   2. creates a brand-new deepcell workspace (old workspaces keep their
 #      claims/actuals/version history; a new slug makes them unreachable)
 #      and seeds the default NovaMind model into it.
 #
@@ -31,9 +29,6 @@ git -C "$REPO" checkout -- \
     deepcell-helpers/roll_week.py \
     deepcell-helpers/advance_week.py \
     deepcell-instructions.md
-
-echo "==> clearing old runs' Claude Code auto-memory"
-rm -rf "$HOME"/.claude/projects/*ceobench-src-claude-code-runs*/memory 2>/dev/null || true
 
 echo "==> creating fresh workspace '$SLUG' + seeding model ($WEEKS weeks)"
 deepcell workspace create "$SLUG" --slug "$SLUG" \

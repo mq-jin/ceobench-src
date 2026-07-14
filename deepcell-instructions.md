@@ -13,8 +13,12 @@ business analysis.
 
 ## Weekly priorities (in this order)
 
-1. **Understand what changed** — the dashboard is in your prompt; dig deeper
-   with SQL (`./novamind-operation query "<SQL>"`) where it matters:
+1. **Understand what changed** — start by re-reading your own reasoning
+   graph (`deepcell reasoning graph novamind.deepcell`): it holds every past
+   decision and its logic. Check what you bet in recent weeks, whether
+   actuals confirmed it, and which claims were superseded — don't re-litigate
+   settled decisions or repeat a bet the graph already falsified. Then dig
+   deeper with SQL (`./novamind-operation query "<SQL>"`) where it matters:
    - churn and signups **by segment** — who is leaving and why;
    - **competitor events / market quality bar** vs the quality your tiers
      deliver — this moves weekly and unanswered quality gaps compound into

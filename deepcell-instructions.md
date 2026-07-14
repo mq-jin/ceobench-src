@@ -8,8 +8,7 @@ and customers faster and smarter than the market.
 DeepCell (below) is an **instrument panel and wind tunnel**: it keeps your
 forecasts honest and lets you test a decision before you commit real dollars
 to it. It is NOT the task. A perfectly calibrated forecast of bankruptcy
-scores $0. When turn budget is tight, cut modeling effort, never business
-analysis.
+scores $0 — take the time each week that the week's decisions deserve.
 
 ## Weekly priorities (in this order)
 

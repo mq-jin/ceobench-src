@@ -20,7 +20,7 @@ This mirrors ``claude_code/run_test.py``:
 Usage::
 
     uv run python -m saas_bench.agents.codex_agent.run_test \
-        --days 14 --model gpt-5.5 --reasoning-effort high
+        --days 14 --model gpt-5.6-sol --reasoning-effort high
 """
 from __future__ import annotations
 
@@ -44,7 +44,7 @@ if str(_PKG_ROOT) not in sys.path:
     sys.path.insert(0, str(_PKG_ROOT))
 
 from saas_bench.agents.claude_code.system_prompt_transform import (
-    build_claude_code_system_prompt,
+    build_codex_system_prompt,
 )
 
 
@@ -69,7 +69,7 @@ class CodexCLIRunner:
     def __init__(
         self,
         *,
-        model: str = "gpt-5.5",
+        model: str = "gpt-5.6-sol",
         reasoning_effort: str = "high",
         seed: int = 42,
         scenario: str = "default",
@@ -415,10 +415,23 @@ class CodexCLIRunner:
         bash_prompt = (
             Path(__file__).parent.parent / "bash_agent" / "system_prompt.md"
         ).read_text()
-        body = build_claude_code_system_prompt(bash_prompt, sim_text)
+        body = build_codex_system_prompt(bash_prompt, sim_text)
         body = body.replace("{total_days}", str(self.total_days)).replace(
             "{total_years}", years_str
         )
+
+        # Keep operator-supplied workflows (for example DeepCell decision
+        # support) in parity with the Claude Code runner. Codex automatically
+        # loads AGENTS.md from the workspace root.
+        extra_path = os.environ.get("CEOBENCH_EXTRA_INSTRUCTIONS")
+        if extra_path:
+            extra = Path(extra_path).read_text()
+            extra = (
+                extra.replace("{total_days}", str(self.total_days))
+                .replace("{total_weeks}", str((self.total_days + 6) // 7))
+                .replace("{total_years}", years_str)
+            )
+            body += "\n\n" + extra
 
         (self.agent_workspace / "AGENTS.md").write_text(body)
 
@@ -756,7 +769,7 @@ def main() -> None:
     import argparse
 
     p = argparse.ArgumentParser(description="Run Codex CLI agent on SaaS Bench")
-    p.add_argument("--model", default="gpt-5.5")
+    p.add_argument("--model", default="gpt-5.6-sol")
     p.add_argument(
         "--reasoning-effort",
         # codex accepts xhigh via ``-c model_reasoning_effort=xhigh`` even

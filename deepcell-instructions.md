@@ -10,26 +10,24 @@ forecasts honest and lets you test a decision before you commit real dollars
 to it. It is NOT the task. A perfectly calibrated forecast of bankruptcy
 scores $0 — take the time each week that the week's decisions deserve.
 
-## Weekly priorities (in this order)
+## Weekly decision flow (concept, not a script)
 
-1. **Understand what changed** — start by re-reading your own reasoning
-   graph (`deepcell reasoning graph novamind.deepcell`): it holds every past
-   decision and its logic. Check what you bet in recent weeks, whether
-   actuals confirmed it, and which claims were superseded — don't re-litigate
-   settled decisions or repeat a bet the graph already falsified. Then dig
-   deeper with SQL (`./novamind-operation query "<SQL>"`) where it matters:
-   segment churn/signups, competitor events vs the quality your tiers
-   deliver, CAC vs LTV by channel, enterprise pipeline, open issues.
-2. **Decide and execute levers** — prices, tiers, quotas, capacity, dev/ops
-   spend, targeted ads, promotions, enterprise responses. Think in unit
-   economics. **For a nontrivial or contested decision, test it in the model
-   first** (see *Simulate before you commit*) instead of mental math.
-3. **Keep the model honest & record the decision** (flow below).
-4. **Advance exactly once, then END YOUR TURN** — the harness prompts you
-   again next week (the advance gate hard-refuses any other week).
+**Understand the past and present → Explore and analyze → Decide and execute.**
 
-Spend most of your turn on 1–2. If a deepcell command errors twice, continue
-the week without it — never let modeling block the game.
+- **Understand the past and present** means recovering relevant prior
+  decisions and beliefs, checking them against actual outcomes, and forming a
+  current view of the business.
+- **Explore and analyze** means investigating the questions and uncertainties
+  that could change the decision, using whichever tools and depth are useful.
+- **Decide and execute** means choosing and applying the business levers that
+  best serve the cash objective.
+
+This is an orientation, not a checklist. Decide which questions to ask, which
+tools to use, how deeply to analyze, and when to loop back between phases.
+DeepCell supports the decision; it does not prescribe one. Subject only to
+the hard gates below, use as much or as little of it as the decision warrants.
+If a DeepCell command errors twice, continue without it rather than letting
+modeling block the game.
 
 # DeepCell instrument panel
 
@@ -42,65 +40,116 @@ band.
 **The seeded model is just the base.** Its ten cash-bridge drivers
 (`SubsRevenue`, `AdsRevenue`, `EnterpriseRevenue`, `CapacityCost`,
 `ComputeCost`, `DevSpend`, `AdSpend`, `OpsSpend`, `LeadCost`,
-`ResearchSpend`) are the minimum skeleton. **You are expected to grow it as
-your analysis needs** — when a decision hinges on something the model can't
-express (competitor quality bar, per-segment churn, plan migration, CAC
-efficiency), add that driver and wire it in, so the cash lines become
+`ResearchSpend`) are the minimum skeleton. **You can grow it when useful.**
+When a decision hinges on something the model cannot express (competitor
+quality bar, per-segment churn, plan migration, CAC efficiency), you can add
+that driver and wire it in so the cash lines become
 computed consequences of your beliefs instead of numbers you type.
 
-## Weekly flow (outcomes, not a script)
+## Available tools
 
-1. **Calibrate** — roll the finished week once:
+For exact DeepCell syntax, run `deepcell <command> --help`. Run
+`deepcell guide` to list modeling topics and `deepcell guide <topic>` to
+open one.
 
-       python3 /home/mengqi/ceobench-src/deepcell-helpers/roll_week.py <completed_week>
+### Inspect the business and prior reasoning
 
-   It writes actuals into the model, logs forecast error to
-   `forecast_log.csv`, and prints the 12 forecast numbers (point/low/high at
-   +1/+4/+12/+26 weeks) **computed from the model**. When the forecast
-   missed, fix the belief that was wrong (a driver, upstream if you've added
-   them), never the computed result.
-2. **Update beliefs** — batched edit of future-week drivers
-   (`deepcell edit novamind.deepcell --batch '[...]'`; at least the next 4
-   weeks plus the +12/+26 landmarks). Your 95% band is *computed*: put
-   pessimistic/optimistic values on the drivers that carry the uncertainty
-   via `--scenario low` / `--scenario high`, and let `EndingCash` under those
-   scenarios be the band. If drivers changed, re-run roll_week once for
-   fresh numbers.
-3. **Grow the model when analysis needs it** — new drivers/calcs via
-   `deepcell defs apply` (see `deepcell guide values-vs-defs-ops` and
-   `deepcell guide calc-engine`). Example: facing repeated competitor
-   shocks, add `CompetitorQualityBar` and `ChurnRate_S2` as drivers and a
-   calc making `SubsRevenue` respond to the quality gap — then scenario-vary
-   the bar instead of hand-typing revenue under each hypothesis.
-4. **Simulate before you commit** — use the engine, not intuition, for big
-   calls:
-   - *Event hypotheses:* scenario-vary the upstream driver (e.g. competitor
-     ships in 4 weeks vs doesn't) and compare `EndingCash` paths —
-     `deepcell query ... --scenario ...`; `deepcell guide scenarios` for
-     defining richer scenarios than low/high.
-   - *Lever choices:* a sensitivity sweep (e.g. price × dev-spend →
-     EndingCash at +12w) — `deepcell guide sensitivity`. Prefer the lever
-     that wins across scenarios, not just in the base case.
-5. **Record the decision** — at minimum one claim (the gate checks it):
-   `deepcell reasoning add-claim novamind.deepcell --id wk<N>_<slug>
-   --kind thesis|risk|catalyst --label "..." --body "decision + why"`
-   (`risk` needs `--probability` + `--severity`; `catalyst` needs
-   `--probability`), and from week 2 an argument edge to prior reasoning
-   (`deepcell reasoning add-argument ... --rel
-   supports|refutes|supersedes|depends_on`). For nontrivial calls, capture
-   the actual thinking — cite the simulation that justified it
-   (`add-evidence`), the assumptions it rests on (`add-assumption`), the
-   alternatives you rejected. When actuals falsify a claim, supersede it —
-   never delete.
-6. **Advance — ONLY via the gate wrapper** (never call
-   `./novamind-operation next-week` directly):
+- `./novamind-operation query "<SQL>"` queries simulator data. Use it for
+  whichever details matter to the current decision, such as segment churn
+  and signups, CAC and LTV by channel, competitor events, enterprise
+  pipeline, capacity, or open issues. References:
+  `./novamind-operation query --help` for command syntax,
+  `docs/cli-reference.md` for behavior and restrictions, and
+  `docs/tables-reference.md` for available tables and columns.
+- `deepcell reasoning graph novamind.deepcell` shows past claims, assumptions,
+  evidence, and relationships. Use it to recover earlier logic, compare it
+  with actuals, and avoid repeating a falsified bet. References:
+  `deepcell reasoning graph --help` and `deepcell guide reasoning`.
+- The simulator's business tools control prices, product tiers, quotas,
+  capacity, spending, advertising, promotions, research, social posts, and
+  enterprise responses. Choose and use them directly when the business case
+  supports an action. See `docs/tools-reference.md` for their parameters,
+  effects, and examples.
 
-       python3 /home/mengqi/ceobench-src/deepcell-helpers/advance_week.py \
-           <week_being_completed> '<rationale>' <12 numbers>
+### Calibrate and inspect the cash model
 
-   Single quotes around the rationale. If it prints BLOCKED, do what it says
-   and re-run — the simulator was not touched. Once it succeeds, end your
-   turn.
+- To roll a completed week from forecast to actual, use:
+
+      python3 /home/mengqi/ceobench-src/deepcell-helpers/roll_week.py <completed_week>
+
+  The helper writes realized ledger values into the model, appends forecast
+  error to `forecast_log.csv`, and prints model-derived point/low/high cash
+  forecasts at +1/+4/+12/+26 weeks. Run it at most once for a completed week,
+  because each invocation appends a calibration record.
+- `deepcell query novamind.deepcell <item> <context>` reads a model value.
+  Add `--scenario low` or `--scenario high` to read the seeded uncertainty
+  scenarios. Use `EndingCash` for the cash path and `LedgerCash` for the
+  realized-truth anchor. References: `deepcell query --help` and
+  `deepcell guide scenario-definitions`.
+- When a forecast misses, change the belief represented by an input driver;
+  do not overwrite a computed result.
+
+### Change or extend model beliefs
+
+- `deepcell edit novamind.deepcell --batch '[...]'` updates driver values in
+  one batch. Add `--scenario low` or `--scenario high` to place uncertain
+  inputs in those scenarios; their computed `EndingCash` values form the
+  corresponding forecast bounds. References: `deepcell edit --help`,
+  `deepcell guide values-vs-defs-ops`, and
+  `deepcell guide scenario-definitions`.
+- `deepcell defs apply` adds drivers and calculations when the seeded cash
+  bridge cannot express a decision-relevant belief. For example, a competitor
+  quality bar and segment churn driver can feed subscription revenue instead
+  of requiring hand-entered revenue guesses. References:
+  `deepcell defs apply --help`, `deepcell guide values-vs-defs-ops`, and
+  `deepcell guide calc-engine`.
+
+### Test hypotheses and alternatives
+
+- Scenario queries compare event hypotheses by changing upstream drivers and
+  reading the resulting `EndingCash` paths. References:
+  `deepcell query --help`, `deepcell guide scenarios`, and
+  `deepcell guide scenario-definitions`.
+- Sensitivity sweeps compare lever combinations, such as price and development
+  spend against cash at a chosen horizon. References:
+  `deepcell defs add-sensitivity --help` and
+  `deepcell guide sensitivity`.
+
+### Record reasoning
+
+- Add a decision claim with:
+
+      deepcell reasoning add-claim novamind.deepcell --id wk<N>_<slug> \
+          --kind thesis|risk|catalyst --label "..." --body "decision + why"
+
+  A `risk` also needs `--probability` and `--severity`; a `catalyst` needs
+  `--probability`. References: `deepcell reasoning add-claim --help` and
+  `deepcell guide reasoning`.
+- Connect reasoning with `deepcell reasoning add-argument ... --rel
+  supports|refutes|supersedes|depends_on`. Optional `add-evidence` and
+  `add-assumption` entries can preserve simulations, premises, and rejected
+  alternatives. Supersede falsified claims rather than deleting them.
+  References: `deepcell reasoning add-argument --help`,
+  `deepcell reasoning --help`, and `deepcell guide reasoning`.
+
+## Hard gates for advancing a week
+
+- The reasoning graph must contain a claim whose ID begins `wk<N>_` for the
+  week being completed.
+- From week 2 onward, a current-week reasoning node must have an Argument edge
+  connecting it to prior reasoning.
+- Advance only through the gate wrapper; do not call
+  `./novamind-operation next-week` directly:
+
+      python3 /home/mengqi/ceobench-src/deepcell-helpers/advance_week.py \
+          <week_being_completed> '<rationale>' <12 numbers>
+
+- The rationale must be non-empty. The 12 numbers are four triples in this
+  order: +1, +4, +12, and +26 weeks; each triple is
+  `point low95 high95` and must satisfy `low95 <= point <= high95`.
+- Only the week assigned by the harness may advance. If the wrapper prints
+  `BLOCKED`, the simulator was not changed; satisfy the reported gate and try
+  again. After one successful advance, end the turn.
 
 ## Model rules
 

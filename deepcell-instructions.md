@@ -91,6 +91,9 @@ open one.
 
 ### Change or extend model beliefs
 
+- Do not manually calculate and enter every derived number. Define the
+  calculation once, edit only its input drivers, and then query the result;
+  the DeepCell engine calculates the output for each context and scenario.
 - `deepcell edit novamind.deepcell --batch '[...]'` updates driver values in
   one batch. Add `--scenario low` or `--scenario high` to place uncertain
   inputs in those scenarios; their computed `EndingCash` values form the

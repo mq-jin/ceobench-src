@@ -262,6 +262,33 @@ versioned `novamind.deepcell` (drivers, forecasts, and a claim-per-decision
 reasoning graph with `supersedes` edges when the strategy pivots), and
 `forecast_log.csv` (forecast-vs-actual calibration per week).
 
+### 🧮 Option E (this fork): Codex CLI + DeepCell decision-support
+
+The same harness can run with a local **Codex CLI** agent. Codex receives the
+benchmark and DeepCell playbook through the generated `AGENTS.md`, uses
+`./novamind-operation` to play each week, and resumes the same Codex session
+until the simulation finishes.
+
+**Prerequisites:** `codex` (authenticated) and `deepcell` (logged in to a
+Jingwei API) on PATH, plus the simulator credentials from the Setup section.
+
+```bash
+uv sync
+export OPENROUTER_API_KEY="sk-or-..."            # simulator roles (see Option C above)
+export NMDB_KEY=<key from KEYS.md>               # runner requirement
+export DEEPCELL_WORKSPACE=ceo-bench              # dedicated deepcell workspace
+
+python3 deepcell-helpers/gen_model.py --weeks 72 # seed a fresh model
+
+CEOBENCH_EXTRA_INSTRUCTIONS=$PWD/deepcell-instructions.md \
+uv run python -m saas_bench.agents.codex_agent.run_test \
+    --days 500 --seed 42 --workspace codex_agent_runs \
+    --model gpt-5.6-sol --reasoning-effort high
+```
+
+Use `--codex-bin /path/to/codex` if the executable is not on PATH. To resume an
+interrupted benchmark, pass `--continue-from codex_agent_runs/run_<id>`.
+
 
 ## 📈 Analyzing agent trajectory
 

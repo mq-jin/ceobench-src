@@ -1,98 +1,114 @@
 #!/usr/bin/env python3
-"""Advance the NovaMind week — GATED on a recorded decision in the reasoning graph.
+"""Advance the NovaMind week, submitting forecasts read from the model.
 
 Usage (from the agent workspace):
 
-    python3 advance_week.py <week_being_completed> "<rationale>" <12 numbers>
+    python3 advance_week.py <week_being_completed> '<rationale>'
 
-The 12 numbers are point low95 high95 at +7, +28, +84, +182 days (same order
-`./novamind-operation next-week` expects).
+No forecast numbers are accepted on the command line. This wrapper queries
+novamind.deepcell for EndingCash at +1/+4/+12/+26 weeks — point from the
+base scenario, band from the `low`/`high` scenarios — and submits exactly
+those to `./novamind-operation next-week`. To change the forecast, change
+the model: update the drivers (and scenario overrides), then run this.
 
-The gate: novamind.deepcell's <Reasoning> must contain at least one Claim with
-id `wk<N>_*` for this week (your decision + why), and from week 2 on at least
-one Argument edge from a `wk<N>_*` node (supports / refutes / supersedes /
-depends_on a prior claim or assumption). If the gate fails, nothing is sent to
-the simulator — add the claim first:
+After a successful advance it also appends a calibration row to
+forecast_log.csv automatically: the week's realized cumulative ledger cash,
+compared against the +1w point submitted at the PREVIOUS advance. The
+calibration record exists whether or not you remember it.
 
-    deepcell reasoning add-claim novamind.deepcell --id wk<N>_<slug> \
-        --kind thesis --label "..." --body "what you decided and why"
-    deepcell reasoning add-argument novamind.deepcell --from-id wk<N>_<slug> \
-        --to-id <prior_node> --rel supports
-
-On success this wrapper execs `./novamind-operation next-week` for you.
+The reasoning-record discipline (a wk<N>_* claim + argument edge before
+advancing) lives in the instructions, not here.
 """
-import json
+import csv
 import os
-import re
 import subprocess
 import sys
+from pathlib import Path
 
-MODEL = os.environ.get("DEEPCELL_MODEL_FILE", "novamind.deepcell")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from roll_week import TOTAL_WEEKS, deepcell_value, novamind_query
+
+HORIZONS = (1, 4, 12, 26)
+LOG = Path("forecast_log.csv")
+LOG_HEADER = ["week", "realized_cash", "prev_point_forecast", "pct_error",
+              "next_point", "next_low", "next_high"]
 
 
 def fail(msg: str):
-    print(f"BLOCKED — week NOT advanced.\n{msg}", file=sys.stderr)
+    print(f"NOT advanced.\n{msg}", file=sys.stderr)
     sys.exit(1)
 
 
+def log_calibration(week: int, next_triple):
+    """Append realized-vs-previous-forecast for week N + this advance's +1w
+    forecast. All numbers come from the sim ledger or the model."""
+    _, rows = novamind_query(
+        f"SELECT COALESCE(SUM(amount), 0) AS cash FROM ledger "
+        f"WHERE day <= {week * 7}"
+    )
+    r0 = rows[0]
+    realized = float(r0["cash"] if isinstance(r0, dict) else r0[0])
+
+    prev_point, pct = "", ""
+    if LOG.exists():
+        last = list(csv.DictReader(LOG.open()))
+        if last and last[-1].get("next_point"):
+            prev_point = float(last[-1]["next_point"])
+            pct = round(100 * (prev_point - realized) / max(abs(realized), 1), 2)
+
+    new = not LOG.exists()
+    with LOG.open("a", newline="") as f:
+        w = csv.writer(f)
+        if new:
+            w.writerow(LOG_HEADER)
+        w.writerow([week, round(realized, 2), prev_point, pct, *next_triple])
+    if pct != "":
+        print(f"calibration: week {week} realized {realized:,.2f} vs "
+              f"forecast {prev_point:,.2f} ({pct:+}%) — logged.")
+    else:
+        print(f"calibration: week {week} realized {realized:,.2f} logged "
+              f"(no prior forecast to compare).")
+
+
 def main():
-    if len(sys.argv) < 15:
-        fail(f"usage: advance_week.py <week> \"<rationale>\" <12 numbers> "
-             f"(got {len(sys.argv) - 1} args)")
+    if len(sys.argv) != 3:
+        fail(f"usage: advance_week.py <week_being_completed> '<rationale>' "
+             f"(got {len(sys.argv) - 1} args — forecast numbers are read "
+             f"from the model, not the command line)")
     week = int(sys.argv[1])
     rationale = sys.argv[2]
-    raw_nums = sys.argv[3:15]
+    if not rationale.strip():
+        fail("rationale must be non-empty")
 
-    # --- one advance per harness turn ------------------------------------
-    turn_week = os.environ.get("CEOBENCH_TURN_WEEK")
-    if turn_week and week != int(turn_week):
-        fail(
-            f"this turn may only advance week {turn_week} (you asked for week "
-            f"{week}). One week per prompt: after week {turn_week} advances, "
-            f"END YOUR TURN — the harness will prompt you for the next week."
-        )
+    nums, detail = [], []
+    for h in HORIZONS:
+        target = min(week + h, TOTAL_WEEKS)
+        point = deepcell_value("EndingCash", f"W{target}")
+        if point is None:
+            fail(f"no computed EndingCash for W{target} — every cash-bridge "
+                 f"driver needs a value in all weeks; fill the future drivers "
+                 f"and re-run.")
+        low = deepcell_value("EndingCash", f"W{target}", "low")
+        high = deepcell_value("EndingCash", f"W{target}", "high")
+        low = low if low is not None else point
+        high = high if high is not None else point
+        lo, hi = min(low, high, point), max(low, high, point)
+        nums += [round(point), round(lo), round(hi)]
+        detail.append(f"  +{h}w (W{target}): point={point:,.0f} "
+                      f"low={lo:,.0f} high={hi:,.0f}")
 
-    # --- validate the 12 forecasts -------------------------------------
-    try:
-        nums = [float(x.replace(",", "")) for x in raw_nums]
-    except ValueError as e:
-        fail(f"forecast numbers must be numeric: {e}")
-    for i in range(0, 12, 3):
-        point, lo, hi = nums[i], nums[i + 1], nums[i + 2]
-        if not (lo <= point <= hi):
-            fail(f"horizon {i // 3 + 1}: expected low <= point <= high, got "
-                 f"point={point} low={lo} high={hi} — fix the ordering "
-                 f"(each triple is point low95 high95).")
-
-    # --- the reasoning gate ---------------------------------------------
-    xml = subprocess.run(
-        ["deepcell", "cat", MODEL], capture_output=True, text=True,
-    ).stdout
-    claims = re.findall(rf'<Claim\s+id="(wk{week}_[^"]*)"', xml)
-    if not claims:
-        fail(
-            f"no decision recorded for week {week}. Add at least one Claim "
-            f"with id prefix 'wk{week}_' to {MODEL} first:\n"
-            f"  deepcell reasoning add-claim {MODEL} --id wk{week}_<slug> "
-            f"--kind thesis --label \"...\" --body \"decision + why\"\n"
-            f"then re-run this command."
-        )
-    if week >= 2:
-        edges = re.findall(rf'<Argument[^>]*\bfrom="wk{week}_[^"]*"', xml)
-        if not edges:
-            fail(
-                f"week {week} claim(s) {claims} exist but are not linked to "
-                f"prior reasoning. Add an Argument edge first:\n"
-                f"  deepcell reasoning add-argument {MODEL} "
-                f"--from-id {claims[0]} --to-id <prior_node_id> "
-                f"--rel supports|refutes|supersedes|depends_on\n"
-                f"then re-run this command."
-            )
-
-    print(f"reasoning gate OK (week {week}: {', '.join(claims)}) — advancing.")
+    print("submitting model-derived forecasts:")
+    print("\n".join(detail))
     proc = subprocess.run(
-        ["./novamind-operation", "next-week", rationale] + raw_nums,
+        ["./novamind-operation", "next-week", rationale]
+        + [str(n) for n in nums],
     )
+    if proc.returncode == 0:
+        try:
+            log_calibration(week, nums[0:3])
+        except Exception as e:  # never let logging mask a successful advance
+            print(f"WARNING: advance succeeded but calibration logging "
+                  f"failed: {e}", file=sys.stderr)
     sys.exit(proc.returncode)
 
 

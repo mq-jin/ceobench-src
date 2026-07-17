@@ -6,7 +6,9 @@ Usage: python3 gen_model.py [--weeks 72] [--file novamind.deepcell]
 Design (deliberately status-free to avoid actual/projected calc-resolution
 mismatches): every driver holds ONE value per week — the current belief for
 future weeks, the realized value for completed weeks (roll_week.py overwrites
-them). NetCashFlow and EndingCash are CalcDefs over the drivers; LedgerCash is
+them). Driver values are LEDGER-SIGNED (inflows positive, outflows negative,
+exactly as the sim DB reports them); all arithmetic lives in the model's
+formulas, none in the helper scripts. NetCashFlow and EndingCash are CalcDefs over the drivers; LedgerCash is
 the sim-ledger truth anchor written by roll_week.py. Scenarios `low`/`high`
 carry 95%-band driver overrides.
 """
@@ -16,17 +18,32 @@ import subprocess
 import sys
 import tempfile
 
+# Drivers hold LEDGER-SIGNED cash flows exactly as the sim DB reports them:
+# inflows positive, outflows negative. No sign conversion happens anywhere
+# outside the model — NetCashFlow is a plain sum of these.
+#
+# SubsRevenue is NOT a typed number: it is computed NewSubs * AvgSubPrice in
+# every week. This seeds the modeling pattern — revenue is a consequence of
+# belief drivers, and the only way to change a revenue forecast is to change
+# the beliefs behind it. Grow the same way (deeper drivers feeding these).
+BELIEF_DRIVERS = [
+    ("NewSubs", "New subscribers in week (belief; overwrite with actuals)",
+     90, "numeric"),
+    ("AvgSubPrice", "Avg revenue per new subscriber, USD (belief; overwrite "
+     "with actuals = subs revenue / signups)", 95, "monetary"),
+]
 DRIVERS = [
-    ("SubsRevenue", "Subscription Revenue", 100),
-    ("AdsRevenue", "In-App Ads Revenue", 110),
-    ("EnterpriseRevenue", "Enterprise Revenue (excl. subs-billed)", 120),
-    ("CapacityCost", "Capacity Cost", 200),
-    ("ComputeCost", "Compute Cost", 210),
-    ("DevSpend", "Development Spend", 220),
-    ("AdSpend", "Advertising Spend", 230),
-    ("OpsSpend", "Operations Spend", 235),
-    ("LeadCost", "Lead Acquisition Cost", 237),
-    ("ResearchSpend", "Research Spend", 240),
+    ("SubsRevenue", "Subscription Revenue = NewSubs * AvgSubPrice (computed "
+     "- edit the belief drivers, never this)", 100),
+    ("AdsRevenue", "In-App Ads Revenue (ledger-signed: inflow +)", 110),
+    ("EnterpriseRevenue", "Enterprise Revenue excl. subs-billed (ledger-signed: inflow +)", 120),
+    ("CapacityCost", "Capacity Cost (ledger-signed: outflow -)", 200),
+    ("ComputeCost", "Compute Cost (ledger-signed: outflow -)", 210),
+    ("DevSpend", "Development Spend (ledger-signed: outflow -)", 220),
+    ("AdSpend", "Advertising Spend (ledger-signed: outflow -)", 230),
+    ("OpsSpend", "Operations Spend (ledger-signed: outflow -)", 235),
+    ("LeadCost", "Lead Acquisition Cost (ledger-signed: outflow -)", 237),
+    ("ResearchSpend", "Research Spend (ledger-signed: outflow -)", 240),
 ]
 
 
@@ -53,28 +70,36 @@ def build_xml(weeks: int) -> str:
         )
     L.append("  </ContextDefinitions>")
     L.append("  <ItemDefinitions>")
-    items = [("StartingCash", "Starting Cash (constant)", 50)] + DRIVERS + [
-        ("NetCashFlow", "Net Cash Flow", 300),
-        ("EndingCash", "Ending Cash", 400),
-        ("LedgerCash", "Ledger Cash (realized, cumulative)", 410),
-    ]
-    for iid, label, order in items:
+    items = (
+        [("StartingCash", "Starting Cash (constant)", 50, "monetary")]
+        + BELIEF_DRIVERS
+        + [(iid, label, order, "monetary") for iid, label, order in DRIVERS]
+        + [
+            ("NetCashFlow", "Net Cash Flow", 300, "monetary"),
+            ("EndingCash", "Ending Cash", 400, "monetary"),
+            ("LedgerCash", "Ledger Cash (realized, cumulative)", 410, "monetary"),
+        ]
+    )
+    for iid, label, order, dtype in items:
         L.append(f'    <Item itemId="{iid}" order="{order}" level="0">')
         L.append(f'      <Label lang="en">{label}</Label>')
-        L.append("      <DataType>monetary</DataType>")
-        L.append("      <Currency>USD</Currency>")
+        L.append(f"      <DataType>{dtype}</DataType>")
+        if dtype == "monetary":
+            L.append("      <Currency>USD</Currency>")
         L.append("      <Scale>1</Scale>")
         L.append("    </Item>")
     L.append("  </ItemDefinitions>")
     L.append("  <CalculationDefinitions>")
-    ncf = " + ".join(f"{d[0]}[CURRENT]" for d in DRIVERS[:3]) + " - " + " - ".join(
-        f"{d[0]}[CURRENT]" for d in DRIVERS[3:]
-    )
+    # All drivers are ledger-signed, so net cash flow is a straight sum.
+    ncf = " + ".join(f"{d[0]}[CURRENT]" for d in DRIVERS)
     # NOTE: the element is <Calculation> with @contextRefs (CSV) — see
     # `deepcell guide calc-specificity`. A calc with no statusRef matches any
     # cell, which is what this status-free model wants.
     L.append('    <Calculation id="calc_ncf" itemRef="NetCashFlow">')
     L.append(f"      <Formula>{ncf}</Formula>")
+    L.append("    </Calculation>")
+    L.append('    <Calculation id="calc_subsrev" itemRef="SubsRevenue">')
+    L.append("      <Formula>NewSubs[CURRENT] * AvgSubPrice[CURRENT]</Formula>")
     L.append("    </Calculation>")
     L.append('    <Calculation id="calc_endcash_w1" itemRef="EndingCash" contextRefs="W1">')
     L.append("      <Formula>StartingCash[CURRENT] + NetCashFlow[CURRENT]</Formula>")
@@ -89,7 +114,10 @@ def build_xml(weeks: int) -> str:
         '    <Value itemRef="StartingCash" contextRef="W1" '
         'valueEditable="true">1000000</Value>'
     )
-    for iid, _, _ in DRIVERS:
+    seeded = [iid for iid, _, _, _ in BELIEF_DRIVERS] + [
+        iid for iid, _, _ in DRIVERS if iid != "SubsRevenue"  # computed
+    ]
+    for iid in seeded:
         for w in range(1, weeks + 1):
             L.append(
                 f'    <Value itemRef="{iid}" contextRef="W{w}" '

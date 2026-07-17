@@ -8,17 +8,26 @@ Usage (run from the agent workspace, where ./novamind-operation lives):
 What it does:
   1. Pulls week N's realized flows from the sim ledger (per-category sums via
      `./novamind-operation query`) and the cumulative ledger cash.
-  2. Logs forecast-vs-actual for week N to forecast_log.csv (calibration).
-  3. Overwrites week N's driver values in novamind.deepcell with the actuals
+  2. Overwrites week N's driver values in novamind.deepcell with the actuals
      (base scenario) and writes LedgerCash (cumulative realized cash).
-  4. Prints the recomputed EndingCash path and the ready-to-use 12 forecast
-     numbers (point/low95/high95 at +1, +4, +12, +26 weeks) for `next-week`.
+     SubsRevenue is computed (NewSubs * AvgSubPrice), so it is never written:
+     instead the script reports the realized subscription total and warns if
+     the model's computed value has drifted from it — update NewSubs /
+     AvgSubPrice actuals (signups from the weekly report or subscriptions
+     table; price = revenue / signups, in SQL) to reconcile.
+  3. Prints the recomputed EndingCash path and reference forecasts
+     (point/low95/high95 at +1, +4, +12, +26 weeks). Calibration is logged
+     automatically by advance_week.py at each advance — not here.
 
 The model's future-week drivers are NOT touched — revising beliefs for
 upcoming weeks stays a judgment call (deepcell edit ... --scenario low/high
 for the band).
+
+Grown models: a workspace-local driver_map.json extends the built-in
+ledger-category -> driver map ({"<category>": "<ItemId>"}); ledger categories
+mapped by neither are warned about, not silently dropped. Ledger sums are
+written to drivers VERBATIM (signed) — all arithmetic stays in the model.
 """
-import csv
 import json
 import os
 import subprocess
@@ -28,21 +37,54 @@ from pathlib import Path
 MODEL = os.environ.get("DEEPCELL_MODEL_FILE", "novamind.deepcell")
 TOTAL_WEEKS = int(os.environ.get("CEOBENCH_TOTAL_WEEKS", "72"))
 
-# ledger category -> (model item, sign). Costs are negative in the ledger.
+# ledger category -> model item. Values are written LEDGER-SIGNED, verbatim
+# (inflows positive, outflows negative) — the model's NetCashFlow formula is
+# a plain sum, and no arithmetic happens in this script.
 CATEGORY_TO_ITEM = {
-    "subscription_payment": ("SubsRevenue", 1),
-    "ad_revenue": ("AdsRevenue", 1),
-    "capacity": ("CapacityCost", -1),
-    "compute": ("ComputeCost", -1),
-    "development": ("DevSpend", -1),
-    "advertising": ("AdSpend", -1),
-    "operations": ("OpsSpend", -1),
-    "lead_acquisition_cost": ("LeadCost", -1),
-    "market_research": ("ResearchSpend", -1),
-    "group_research": ("ResearchSpend", -1),
-    "research_project": ("ResearchSpend", -1),
+    # subscription_payment is handled specially: SubsRevenue is computed
+    # (NewSubs * AvgSubPrice), so the ledger total is reconciled, not written.
+    "ad_revenue": "AdsRevenue",
+    "capacity": "CapacityCost",
+    "compute": "ComputeCost",
+    "development": "DevSpend",
+    "advertising": "AdSpend",
+    "operations": "OpsSpend",
+    "lead_acquisition_cost": "LeadCost",
+    "market_research": "ResearchSpend",
+    "group_research": "ResearchSpend",
+    "research_project": "ResearchSpend",
     # initial_funding is capital, not a weekly flow — excluded (StartingCash).
 }
+
+# Capital events, not weekly flows — never warned about as unmapped.
+IGNORED_CATEGORIES = {"initial_funding"}
+
+
+def load_driver_map() -> dict:
+    """Merge workspace-local driver_map.json over the built-in category map.
+
+    When you grow the model with a new driver that corresponds to a ledger
+    category, register it here so this script rolls its actuals too:
+
+        driver_map.json:  {"<ledger_category>": "<ItemId>"}
+
+    The ledger sum is written to the item verbatim (signed) — wire the item
+    into NetCashFlow with a plain +.
+    """
+    mapping = dict(CATEGORY_TO_ITEM)
+    path = Path("driver_map.json")
+    if path.exists():
+        try:
+            extra = json.loads(path.read_text())
+        except json.JSONDecodeError as e:
+            sys.exit(f"driver_map.json is not valid JSON: {e}")
+        for cat, item in extra.items():
+            if not isinstance(item, str):
+                sys.exit(f"driver_map.json: value for '{cat}' must be an item "
+                         f"id string (got {item!r}) — ledger sums are written "
+                         f"signed, so no flow type is needed")
+            mapping[cat] = item
+    return mapping
 
 
 def novamind_query(sql: str):
@@ -84,42 +126,63 @@ def main():
         print("Nothing to roll before week 1 — decide your levers, update the "
               "drivers, and read forecasts with `deepcell query` instead.")
         return
+    # Ledger day convention: day 0 holds only the initial funding entry; week
+    # N's flows land on days (N-1)*7+1 .. N*7 inclusive (the sim advances to
+    # day N*7 and bills it), so the window is half-open on the LEFT.
     d0, d1 = (week - 1) * 7, week * 7
 
     # 1. realized flows for the completed week
+    category_map = load_driver_map()
     _, rows = novamind_query(
         f"SELECT category, SUM(amount) AS total FROM ledger "
-        f"WHERE day >= {d0} AND day < {d1} GROUP BY category"
+        f"WHERE day > {d0} AND day <= {d1} GROUP BY category"
     )
-    by_item = {item: 0.0 for item, _ in CATEGORY_TO_ITEM.values()}
+    by_item = {item: 0.0 for item in category_map.values()}
     by_item["EnterpriseRevenue"] = 0.0  # billed through subscription_payment
     def cell(row, idx, key):
         return row[key] if isinstance(row, dict) else row[idx]
 
+    unmapped, subs_total = [], 0.0
     for r in rows:
         cat, total = cell(r, 0, "category"), float(cell(r, 1, "total") or 0)
-        if cat in CATEGORY_TO_ITEM:
-            item, sign = CATEGORY_TO_ITEM[cat]
-            by_item[item] += sign * total
+        if cat == "subscription_payment":
+            subs_total += total
+        elif cat in category_map:
+            by_item[category_map[cat]] += total
+        elif cat not in IGNORED_CATEGORIES:
+            unmapped.append((cat, total))
+    if unmapped:
+        print("WARNING: ledger categories with no driver mapping — their flows "
+              "are in LedgerCash but NOT in any driver (extend driver_map.json "
+              "to roll them):", file=sys.stderr)
+        for cat, total in unmapped:
+            print(f"  {cat:<24} {total:>12,.2f}", file=sys.stderr)
 
     _, cash_rows = novamind_query(
-        f"SELECT COALESCE(SUM(amount), 0) AS cash FROM ledger WHERE day < {d1}"
+        f"SELECT COALESCE(SUM(amount), 0) AS cash FROM ledger WHERE day <= {d1}"
     )
     ledger_cash = float(cell(cash_rows[0], 0, "cash"))
 
-    # 2. calibration log (model's pre-roll forecast vs realized)
+    # 2. pre-roll forecast vs realized, printed for reference (the durable
+    #    calibration log is written by advance_week.py at each advance)
     forecast = deepcell_value("EndingCash", f"W{week}")
-    log = Path("forecast_log.csv")
-    new = not log.exists()
-    with log.open("a", newline="") as f:
-        w = csv.writer(f)
-        if new:
-            w.writerow(["week", "forecast_ending_cash", "ledger_cash", "pct_error"])
-        pct = (
-            round(100 * (forecast - ledger_cash) / max(abs(ledger_cash), 1), 2)
-            if forecast is not None else ""
-        )
-        w.writerow([week, forecast, round(ledger_cash, 2), pct])
+    pct = (
+        round(100 * (forecast - ledger_cash) / max(abs(ledger_cash), 1), 2)
+        if forecast is not None else None
+    )
+
+    # SubsRevenue is computed (NewSubs * AvgSubPrice) — reconcile, don't write
+    model_subs = deepcell_value("SubsRevenue", f"W{week}") or 0.0
+    model_ent = deepcell_value("EnterpriseRevenue", f"W{week}") or 0.0
+    subs_drift = subs_total - (model_subs + model_ent)
+    if abs(subs_drift) > max(0.01 * abs(subs_total), 1):
+        print(f"WARNING: realized subscription_payment {subs_total:,.2f} vs "
+              f"model SubsRevenue+EnterpriseRevenue "
+              f"{model_subs + model_ent:,.2f} (drift {subs_drift:,.2f}).\n"
+              f"  SubsRevenue is computed — reconcile by writing W{week} "
+              f"ACTUALS into its inputs: NewSubs (signups from the weekly "
+              f"report or subscriptions table) and AvgSubPrice (= subs "
+              f"revenue / signups, computed in SQL).", file=sys.stderr)
 
     # 3. write actuals into the model
     batch = [
@@ -137,13 +200,15 @@ def main():
     print(f"Week {week} rolled to actual. Realized flows:")
     for item, val in sorted(by_item.items()):
         print(f"  {item:<18} {val:>12,.2f}")
+    print(f"  {'subscription_pmt':<18} {subs_total:>12,.2f}  (reconcile via "
+          f"NewSubs/AvgSubPrice — SubsRevenue is computed)")
     print(f"  {'LedgerCash':<18} {ledger_cash:>12,.2f}")
     if forecast is not None:
         print(f"Model forecast for W{week} was {forecast:,.2f} "
-              f"(error {pct}% vs ledger) — logged to forecast_log.csv")
+              f"(error {pct}% vs ledger)")
 
     horizons = [1, 4, 12, 26]
-    nums, detail = [], []
+    detail = []
     for h in horizons:
         target = min(week + h, TOTAL_WEEKS)
         point = deepcell_value("EndingCash", f"W{target}")
@@ -155,12 +220,10 @@ def main():
             print(f"WARNING: no EndingCash for W{target}; fill drivers first")
             return
         lo, hi = min(low, high, point), max(low, high, point)
-        nums += [round(point), round(lo), round(hi)]
         detail.append(f"  +{h}w (W{target}): point={point:,.0f} low={lo:,.0f} high={hi:,.0f}")
-    print("\nForecast horizons (after updating future drivers, re-run for fresh numbers):")
+    print("\nReference forecasts (advance_week.py re-reads the model at "
+          "submit time — update future drivers first, then advance):")
     print("\n".join(detail))
-    print("\n12 numbers for next-week:")
-    print("  " + " ".join(str(n) for n in nums))
 
 
 if __name__ == "__main__":

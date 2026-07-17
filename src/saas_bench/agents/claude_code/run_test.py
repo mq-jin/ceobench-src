@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -29,7 +30,7 @@ import time
 import urllib.error
 import urllib.request
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -43,6 +44,36 @@ from .system_prompt_transform import build_claude_code_system_prompt
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+_LIMIT_RESET_RE = re.compile(r"resets\s+(\d{1,2})(?::(\d{2}))?\s*([ap]m)", re.I)
+
+
+def _session_limit_wait_seconds(parsed: Dict[str, Any]) -> Optional[float]:
+    """Seconds to sleep if claude reported a usage/session limit, else None.
+
+    The CLI's limit error reads e.g. "You've hit your session limit · resets
+    4:30pm (UTC)". Sleeping until then (plus margin) and retrying without
+    consuming an attempt turns what used to be a stalled run (v5 wk48, v7
+    wk15+wk35) into a pause.
+    """
+    if not parsed.get("is_error"):
+        return None
+    text = str(parsed.get("result", ""))
+    if "session limit" not in text.lower() and "usage limit" not in text.lower():
+        return None
+    m = _LIMIT_RESET_RE.search(text)
+    if not m:
+        return 30 * 60.0  # limit hit but no reset time parseable
+    hour = int(m.group(1)) % 12
+    if m.group(3).lower() == "pm":
+        hour += 12
+    minute = int(m.group(2) or 0)
+    now = datetime.now(timezone.utc)
+    target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if target <= now:
+        target += timedelta(days=1)
+    return min((target - now).total_seconds() + 180.0, 6 * 3600.0)
 
 
 def _load_env_file(env_path: Path) -> Dict[str, str]:
@@ -630,7 +661,9 @@ class ClaudeCodeCLIRunner:
             )
 
             advanced = False
-            for attempt in range(1, self.max_resume_attempts_per_week + 1):
+            attempt, limit_waits = 0, 0
+            while attempt < self.max_resume_attempts_per_week:
+                attempt += 1
                 if verbose:
                     print(
                         f"\n--- week {week_idx} attempt {attempt} "
@@ -656,6 +689,22 @@ class ClaudeCodeCLIRunner:
                         f"elapsed={result['elapsed_s']:.1f}s",
                         flush=True,
                     )
+
+                # Session/usage limit: sleep until the stated reset instead of
+                # burning attempts and stalling the run.
+                wait = _session_limit_wait_seconds(result["parsed"])
+                if wait and limit_waits < 4:
+                    limit_waits += 1
+                    attempt -= 1  # this try doesn't count
+                    if verbose:
+                        print(
+                            f"  ⏸ claude session limit — sleeping "
+                            f"{wait / 60:.0f} min until reset "
+                            f"(wait {limit_waits}/4)",
+                            flush=True,
+                        )
+                    time.sleep(wait)
+                    continue
 
                 new_status = self._get_game_status()
                 new_sim_day = int(new_status.get("day", sim_day))

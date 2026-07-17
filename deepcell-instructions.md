@@ -46,6 +46,22 @@ quality bar, per-segment churn, plan migration, CAC efficiency), you can add
 that driver and wire it in so the cash lines become
 computed consequences of your beliefs instead of numbers you type.
 
+When you grow the model, keep the helpers working:
+
+- **Fill every week.** A driver wired into the cash bridge needs a value in
+  all contexts (W1..W72) — a gap breaks the `EndingCash` roll-forward from
+  that week on, and `roll_week.py` then can't print the 12 forecast numbers.
+  Seed unknown future weeks with your current belief (or 0).
+- **Register ledger-backed drivers in `driver_map.json`.** `roll_week.py`
+  only rolls actuals for mapped ledger categories. If your new driver
+  corresponds to one, add `{"<ledger_category>": ["<ItemId>", 1 or -1]}`
+  (sign: 1 = revenue, -1 = cost) to `driver_map.json` in the workspace —
+  otherwise its completed weeks silently keep your old beliefs while
+  `LedgerCash` moves, and your calibration log conflates forecast error with
+  roll incompleteness. `roll_week.py` warns about unmapped categories.
+- Drivers that don't map to a ledger category (quality bars, churn rates)
+  are yours to update — roll_week never touches them.
+
 ## Available tools
 
 For exact DeepCell syntax, run `deepcell <command> --help`. Run

@@ -17,6 +17,10 @@ What it does:
 The model's future-week drivers are NOT touched — revising beliefs for
 upcoming weeks stays a judgment call (deepcell edit ... --scenario low/high
 for the band).
+
+Grown models: a workspace-local driver_map.json extends the built-in
+ledger-category -> driver map ({"<category>": ["<ItemId>", 1 | -1]}); ledger
+categories mapped by neither are warned about, not silently dropped.
 """
 import csv
 import json
@@ -43,6 +47,32 @@ CATEGORY_TO_ITEM = {
     "research_project": ("ResearchSpend", -1),
     # initial_funding is capital, not a weekly flow — excluded (StartingCash).
 }
+
+# Capital events, not weekly flows — never warned about as unmapped.
+IGNORED_CATEGORIES = {"initial_funding"}
+
+
+def load_driver_map() -> dict:
+    """Merge workspace-local driver_map.json over the built-in category map.
+
+    When you grow the model with a new driver that corresponds to a ledger
+    category, register it here so this script rolls its actuals too:
+
+        driver_map.json:  {"<ledger_category>": ["<ItemId>", 1 | -1]}
+    """
+    mapping = dict(CATEGORY_TO_ITEM)
+    path = Path("driver_map.json")
+    if path.exists():
+        try:
+            extra = json.loads(path.read_text())
+        except json.JSONDecodeError as e:
+            sys.exit(f"driver_map.json is not valid JSON: {e}")
+        for cat, spec in extra.items():
+            item, sign = spec[0], int(spec[1])
+            if sign not in (1, -1):
+                sys.exit(f"driver_map.json: sign for '{cat}' must be 1 or -1")
+            mapping[cat] = (item, sign)
+    return mapping
 
 
 def novamind_query(sql: str):
@@ -90,20 +120,30 @@ def main():
     d0, d1 = (week - 1) * 7, week * 7
 
     # 1. realized flows for the completed week
+    category_map = load_driver_map()
     _, rows = novamind_query(
         f"SELECT category, SUM(amount) AS total FROM ledger "
         f"WHERE day > {d0} AND day <= {d1} GROUP BY category"
     )
-    by_item = {item: 0.0 for item, _ in CATEGORY_TO_ITEM.values()}
+    by_item = {item: 0.0 for item, _ in category_map.values()}
     by_item["EnterpriseRevenue"] = 0.0  # billed through subscription_payment
     def cell(row, idx, key):
         return row[key] if isinstance(row, dict) else row[idx]
 
+    unmapped = []
     for r in rows:
         cat, total = cell(r, 0, "category"), float(cell(r, 1, "total") or 0)
-        if cat in CATEGORY_TO_ITEM:
-            item, sign = CATEGORY_TO_ITEM[cat]
+        if cat in category_map:
+            item, sign = category_map[cat]
             by_item[item] += sign * total
+        elif cat not in IGNORED_CATEGORIES:
+            unmapped.append((cat, total))
+    if unmapped:
+        print("WARNING: ledger categories with no driver mapping — their flows "
+              "are in LedgerCash but NOT in any driver (extend driver_map.json "
+              "to roll them):", file=sys.stderr)
+        for cat, total in unmapped:
+            print(f"  {cat:<24} {total:>12,.2f}", file=sys.stderr)
 
     _, cash_rows = novamind_query(
         f"SELECT COALESCE(SUM(amount), 0) AS cash FROM ledger WHERE day <= {d1}"

@@ -508,11 +508,17 @@ class ClaudeCodeCLIRunner:
         if resume and self._claude_session_id:
             cmd.extend(["--resume", self._claude_session_id])
 
+        env = os.environ.copy()
+        # Claude Code auto-memory persists across runs keyed by workspace path;
+        # disable it so every run's knowledge lives only in the harness-managed
+        # MEMORY.md and no state leaks between benchmark runs.
+        env["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] = "1"
+
         t0 = time.monotonic()
         proc = subprocess.run(
             cmd,
             cwd=str(self.agent_workspace),
-            env=os.environ.copy(),
+            env=env,
             capture_output=True,
             text=True,
         )

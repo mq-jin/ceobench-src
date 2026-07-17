@@ -84,12 +84,15 @@ def main():
         print("Nothing to roll before week 1 — decide your levers, update the "
               "drivers, and read forecasts with `deepcell query` instead.")
         return
+    # Ledger day convention: day 0 holds only the initial funding entry; week
+    # N's flows land on days (N-1)*7+1 .. N*7 inclusive (the sim advances to
+    # day N*7 and bills it), so the window is half-open on the LEFT.
     d0, d1 = (week - 1) * 7, week * 7
 
     # 1. realized flows for the completed week
     _, rows = novamind_query(
         f"SELECT category, SUM(amount) AS total FROM ledger "
-        f"WHERE day >= {d0} AND day < {d1} GROUP BY category"
+        f"WHERE day > {d0} AND day <= {d1} GROUP BY category"
     )
     by_item = {item: 0.0 for item, _ in CATEGORY_TO_ITEM.values()}
     by_item["EnterpriseRevenue"] = 0.0  # billed through subscription_payment
@@ -103,7 +106,7 @@ def main():
             by_item[item] += sign * total
 
     _, cash_rows = novamind_query(
-        f"SELECT COALESCE(SUM(amount), 0) AS cash FROM ledger WHERE day < {d1}"
+        f"SELECT COALESCE(SUM(amount), 0) AS cash FROM ledger WHERE day <= {d1}"
     )
     ledger_cash = float(cell(cash_rows[0], 0, "cash"))
 

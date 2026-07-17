@@ -26,7 +26,6 @@ echo "==> restoring committed helpers + instructions"
 # incrementally, and checking out the file being executed corrupts the run.
 git -C "$REPO" checkout -- \
     deepcell-helpers/gen_model.py \
-    deepcell-helpers/roll_week.py \
     deepcell-helpers/advance_week.py \
     deepcell-instructions.md
 

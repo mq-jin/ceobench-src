@@ -46,28 +46,23 @@ quality bar, per-segment churn, plan migration, CAC efficiency), you can add
 that driver and wire it in so the cash lines become
 computed consequences of your beliefs instead of numbers you type.
 
-When you grow the model, keep the helpers working:
+When you grow the model, keep it computing:
 
 - **Fill every week.** A driver wired into the cash bridge needs a value in
   all contexts (W1..W72) — a gap breaks the `EndingCash` roll-forward from
-  that week on, and `roll_week.py` then can't print the 12 forecast numbers.
-  Seed unknown future weeks with your current belief (or 0).
+  that week on. Seed unknown future weeks with your current belief (or 0).
 - **Drivers hold ledger-signed values.** Cash-bridge drivers store the sim
   ledger's numbers verbatim — inflows positive, outflows negative (so cost
   drivers are negative) — and `NetCashFlow` is a plain `+` sum. Keep it that
   way: when you add a cash driver, give it a label that states the sign
-  convention and wire it into `NetCashFlow` with `+`. Never convert signs in
-  scripts — arithmetic belongs in the model's formulas or the SQL, nowhere
-  in between.
-- **Register ledger-backed drivers in `driver_map.json`.** `roll_week.py`
-  only rolls actuals for mapped ledger categories. If your new driver
-  corresponds to one, add `{"<ledger_category>": "<ItemId>"}` to
-  `driver_map.json` in the workspace — otherwise its completed weeks
-  silently keep your old beliefs while `LedgerCash` moves, and your
-  calibration log conflates forecast error with roll incompleteness.
-  `roll_week.py` warns about unmapped categories.
-- Drivers that don't map to a ledger category (quality bars, churn rates)
-  are yours to update — roll_week never touches them.
+  convention and wire it into `NetCashFlow` with `+`. Never convert signs
+  outside the model — arithmetic belongs in the model's formulas or the SQL,
+  nowhere in between.
+- **Ledger-backed drivers must be rolled every week** (see the calibration
+  flow below) — a driver you stop rolling silently keeps your old beliefs
+  while `LedgerCash` moves, and your calibration log conflates forecast
+  error with roll incompleteness. Belief drivers that don't map to a ledger
+  category (quality bars, churn rates) are yours to update on judgment.
 
 ## Available tools
 
@@ -94,16 +89,30 @@ open one.
   supports an action. See `docs/tools-reference.md` for their parameters,
   effects, and examples.
 
-### Calibrate and inspect the cash model
+### Calibrate the model on actuals (start of each week)
 
-- To roll a completed week from forecast to actual, use:
+There is no roll script — you pull actuals yourself, and all arithmetic
+stays in the SQL or the model's formulas. For completed week N:
 
-      python3 /home/mengqi/ceobench-src/deepcell-helpers/roll_week.py <completed_week>
+1. **Read your forecast before overwriting it**: `deepcell query
+   novamind.deepcell EndingCash W<N>` — that number was your prediction.
+2. **Pull realized flows from the ledger.** Week N is ledger days
+   `(N-1)*7+1 .. N*7` inclusive — day 0 holds only the initial funding, and
+   the week's last day bills too, so the window is
+   `WHERE day > (N-1)*7 AND day <= N*7`:
 
-  The helper writes realized ledger values into the model, appends forecast
-  error to `forecast_log.csv`, and prints model-derived point/low/high cash
-  forecasts at +1/+4/+12/+26 weeks. Run it at most once for a completed week,
-  because each invocation appends a calibration record.
+       ./novamind-operation query "SELECT category, SUM(amount) FROM ledger
+           WHERE day > <d0> AND day <= <d1> GROUP BY category"
+
+3. **Write them into the drivers verbatim** (signed, no conversion) with one
+   `deepcell edit --batch`, mapping every category except `initial_funding`
+   to a driver — add a driver if none fits. Also write `LedgerCash W<N>` =
+   `SELECT SUM(amount) FROM ledger WHERE day <= <d1>` (the truth anchor;
+   any gap between it and `EndingCash` means a flow you failed to map).
+4. **Log calibration**: append `week,forecast,ledger_cash,pct_error` to
+   `forecast_log.csv`. One row per completed week — this is your instrument
+   error record; read it before trusting the model in a new regime.
+
 - `deepcell query novamind.deepcell <item> <context>` reads a model value.
   Add `--scenario low` or `--scenario high` to read the seeded uncertainty
   scenarios. Use `EndingCash` for the cash path and `LedgerCash` for the
@@ -173,6 +182,10 @@ open one.
 - The rationale must be non-empty. The 12 numbers are four triples in this
   order: +1, +4, +12, and +26 weeks; each triple is
   `point low95 high95` and must satisfy `low95 <= point <= high95`.
+- Derive them from the model, not by hand: after updating future-week
+  drivers, `deepcell query novamind.deepcell EndingCash W<N+h>` (clamp
+  `N+h` to the last context) for the point, and the same query with
+  `--scenario low` / `--scenario high` for the band.
 - Only the week assigned by the harness may advance. If the wrapper prints
   `BLOCKED`, the simulator was not changed; satisfy the reported gate and try
   again. After one successful advance, end the turn.

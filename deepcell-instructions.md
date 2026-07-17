@@ -25,7 +25,8 @@ scores $0 — take the time each week that the week's decisions deserve.
 This is an orientation, not a checklist. Decide which questions to ask, which
 tools to use, how deeply to analyze, and when to loop back between phases.
 DeepCell supports the decision; it does not prescribe one. Subject only to
-the hard gates below, use as much or as little of it as the decision warrants.
+the pre-advance checklist below, use as much or as little of it as the
+decision warrants.
 If a DeepCell command errors twice, continue without it rather than letting
 modeling block the game.
 
@@ -158,24 +159,29 @@ open one.
   References: `deepcell reasoning add-argument --help`,
   `deepcell reasoning --help`, and `deepcell guide reasoning`.
 
-## Hard gates for advancing a week
+## Before advancing a week (self-check, in this order)
 
-- The reasoning graph must contain a claim whose ID begins `wk<N>_` for the
-  week being completed.
-- From week 2 onward, a current-week reasoning node must have an Argument edge
-  connecting it to prior reasoning.
-- Advance only through the gate wrapper; do not call
-  `./novamind-operation next-week` directly:
+Advancing is irreversible — run this checklist BEFORE calling `next-week`,
+every week, no exceptions:
 
-      python3 /home/mengqi/ceobench-src/deepcell-helpers/advance_week.py \
-          <week_being_completed> '<rationale>' <12 numbers>
+1. **Decision recorded.** The reasoning graph contains a claim whose ID
+   begins `wk<N>_` for the week being completed. From week 2 onward, a
+   current-week reasoning node also has an Argument edge connecting it to
+   prior reasoning (`supports|refutes|supersedes|depends_on`). If either is
+   missing, add it now — an unrecorded decision is a decision you cannot
+   audit or supersede later.
+2. **Forecasts come from the model.** The 12 numbers are four triples at
+   +1, +4, +12, and +26 weeks, each `point low95 high95` with
+   `low95 <= point <= high95`. Read them from `roll_week.py`'s output (or
+   re-query `EndingCash` under base/`--scenario low`/`--scenario high` after
+   updating future drivers) — never invent them.
+3. **Right week, once.** Advance only the week the harness assigned this
+   turn. Then advance:
 
-- The rationale must be non-empty. The 12 numbers are four triples in this
-  order: +1, +4, +12, and +26 weeks; each triple is
-  `point low95 high95` and must satisfy `low95 <= point <= high95`.
-- Only the week assigned by the harness may advance. If the wrapper prints
-  `BLOCKED`, the simulator was not changed; satisfy the reported gate and try
-  again. After one successful advance, end the turn.
+       ./novamind-operation next-week '<rationale>' <12 numbers>
+
+   The rationale must be non-empty. After ONE successful advance, END YOUR
+   TURN — the harness prompts you for the next week.
 
 ## Model rules
 

@@ -6,7 +6,9 @@ Usage: python3 gen_model.py [--weeks 72] [--file novamind.deepcell]
 Design (deliberately status-free to avoid actual/projected calc-resolution
 mismatches): every driver holds ONE value per week — the current belief for
 future weeks, the realized value for completed weeks (roll_week.py overwrites
-them). NetCashFlow and EndingCash are CalcDefs over the drivers; LedgerCash is
+them). Driver values are LEDGER-SIGNED (inflows positive, outflows negative,
+exactly as the sim DB reports them); all arithmetic lives in the model's
+formulas, none in the helper scripts. NetCashFlow and EndingCash are CalcDefs over the drivers; LedgerCash is
 the sim-ledger truth anchor written by roll_week.py. Scenarios `low`/`high`
 carry 95%-band driver overrides.
 """
@@ -16,17 +18,20 @@ import subprocess
 import sys
 import tempfile
 
+# Drivers hold LEDGER-SIGNED cash flows exactly as the sim DB reports them:
+# inflows positive, outflows negative. No sign conversion happens anywhere
+# outside the model — NetCashFlow is a plain sum of these.
 DRIVERS = [
-    ("SubsRevenue", "Subscription Revenue", 100),
-    ("AdsRevenue", "In-App Ads Revenue", 110),
-    ("EnterpriseRevenue", "Enterprise Revenue (excl. subs-billed)", 120),
-    ("CapacityCost", "Capacity Cost", 200),
-    ("ComputeCost", "Compute Cost", 210),
-    ("DevSpend", "Development Spend", 220),
-    ("AdSpend", "Advertising Spend", 230),
-    ("OpsSpend", "Operations Spend", 235),
-    ("LeadCost", "Lead Acquisition Cost", 237),
-    ("ResearchSpend", "Research Spend", 240),
+    ("SubsRevenue", "Subscription Revenue (ledger-signed: inflow +)", 100),
+    ("AdsRevenue", "In-App Ads Revenue (ledger-signed: inflow +)", 110),
+    ("EnterpriseRevenue", "Enterprise Revenue excl. subs-billed (ledger-signed: inflow +)", 120),
+    ("CapacityCost", "Capacity Cost (ledger-signed: outflow -)", 200),
+    ("ComputeCost", "Compute Cost (ledger-signed: outflow -)", 210),
+    ("DevSpend", "Development Spend (ledger-signed: outflow -)", 220),
+    ("AdSpend", "Advertising Spend (ledger-signed: outflow -)", 230),
+    ("OpsSpend", "Operations Spend (ledger-signed: outflow -)", 235),
+    ("LeadCost", "Lead Acquisition Cost (ledger-signed: outflow -)", 237),
+    ("ResearchSpend", "Research Spend (ledger-signed: outflow -)", 240),
 ]
 
 
@@ -67,9 +72,8 @@ def build_xml(weeks: int) -> str:
         L.append("    </Item>")
     L.append("  </ItemDefinitions>")
     L.append("  <CalculationDefinitions>")
-    ncf = " + ".join(f"{d[0]}[CURRENT]" for d in DRIVERS[:3]) + " - " + " - ".join(
-        f"{d[0]}[CURRENT]" for d in DRIVERS[3:]
-    )
+    # All drivers are ledger-signed, so net cash flow is a straight sum.
+    ncf = " + ".join(f"{d[0]}[CURRENT]" for d in DRIVERS)
     # NOTE: the element is <Calculation> with @contextRefs (CSV) — see
     # `deepcell guide calc-specificity`. A calc with no statusRef matches any
     # cell, which is what this status-free model wants.

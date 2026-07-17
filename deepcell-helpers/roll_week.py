@@ -19,8 +19,9 @@ upcoming weeks stays a judgment call (deepcell edit ... --scenario low/high
 for the band).
 
 Grown models: a workspace-local driver_map.json extends the built-in
-ledger-category -> driver map ({"<category>": ["<ItemId>", "revenue"|"cost"]});
-ledger categories mapped by neither are warned about, not silently dropped.
+ledger-category -> driver map ({"<category>": "<ItemId>"}); ledger categories
+mapped by neither are warned about, not silently dropped. Ledger sums are
+written to drivers VERBATIM (signed) — all arithmetic stays in the model.
 """
 import csv
 import json
@@ -32,19 +33,21 @@ from pathlib import Path
 MODEL = os.environ.get("DEEPCELL_MODEL_FILE", "novamind.deepcell")
 TOTAL_WEEKS = int(os.environ.get("CEOBENCH_TOTAL_WEEKS", "72"))
 
-# ledger category -> (model item, sign). Costs are negative in the ledger.
+# ledger category -> model item. Values are written LEDGER-SIGNED, verbatim
+# (inflows positive, outflows negative) — the model's NetCashFlow formula is
+# a plain sum, and no arithmetic happens in this script.
 CATEGORY_TO_ITEM = {
-    "subscription_payment": ("SubsRevenue", 1),
-    "ad_revenue": ("AdsRevenue", 1),
-    "capacity": ("CapacityCost", -1),
-    "compute": ("ComputeCost", -1),
-    "development": ("DevSpend", -1),
-    "advertising": ("AdSpend", -1),
-    "operations": ("OpsSpend", -1),
-    "lead_acquisition_cost": ("LeadCost", -1),
-    "market_research": ("ResearchSpend", -1),
-    "group_research": ("ResearchSpend", -1),
-    "research_project": ("ResearchSpend", -1),
+    "subscription_payment": "SubsRevenue",
+    "ad_revenue": "AdsRevenue",
+    "capacity": "CapacityCost",
+    "compute": "ComputeCost",
+    "development": "DevSpend",
+    "advertising": "AdSpend",
+    "operations": "OpsSpend",
+    "lead_acquisition_cost": "LeadCost",
+    "market_research": "ResearchSpend",
+    "group_research": "ResearchSpend",
+    "research_project": "ResearchSpend",
     # initial_funding is capital, not a weekly flow — excluded (StartingCash).
 }
 
@@ -58,12 +61,10 @@ def load_driver_map() -> dict:
     When you grow the model with a new driver that corresponds to a ledger
     category, register it here so this script rolls its actuals too:
 
-        driver_map.json:  {"<ledger_category>": ["<ItemId>", "revenue" | "cost"]}
+        driver_map.json:  {"<ledger_category>": "<ItemId>"}
 
-    The flow type converts ledger convention (signed cash: revenues positive,
-    costs negative) to model convention (positive magnitudes; direction lives
-    in the NetCashFlow formula): "revenue" keeps the ledger sum as-is, "cost"
-    negates it.
+    The ledger sum is written to the item verbatim (signed) — wire the item
+    into NetCashFlow with a plain +.
     """
     mapping = dict(CATEGORY_TO_ITEM)
     path = Path("driver_map.json")
@@ -72,12 +73,12 @@ def load_driver_map() -> dict:
             extra = json.loads(path.read_text())
         except json.JSONDecodeError as e:
             sys.exit(f"driver_map.json is not valid JSON: {e}")
-        for cat, spec in extra.items():
-            item, flow = spec[0], spec[1]
-            if flow not in ("revenue", "cost"):
-                sys.exit(f"driver_map.json: flow for '{cat}' must be "
-                         f"\"revenue\" or \"cost\" (got {flow!r})")
-            mapping[cat] = (item, 1 if flow == "revenue" else -1)
+        for cat, item in extra.items():
+            if not isinstance(item, str):
+                sys.exit(f"driver_map.json: value for '{cat}' must be an item "
+                         f"id string (got {item!r}) — ledger sums are written "
+                         f"signed, so no flow type is needed")
+            mapping[cat] = item
     return mapping
 
 
@@ -131,7 +132,7 @@ def main():
         f"SELECT category, SUM(amount) AS total FROM ledger "
         f"WHERE day > {d0} AND day <= {d1} GROUP BY category"
     )
-    by_item = {item: 0.0 for item, _ in category_map.values()}
+    by_item = {item: 0.0 for item in category_map.values()}
     by_item["EnterpriseRevenue"] = 0.0  # billed through subscription_payment
     def cell(row, idx, key):
         return row[key] if isinstance(row, dict) else row[idx]
@@ -140,8 +141,7 @@ def main():
     for r in rows:
         cat, total = cell(r, 0, "category"), float(cell(r, 1, "total") or 0)
         if cat in category_map:
-            item, sign = category_map[cat]
-            by_item[item] += sign * total
+            by_item[category_map[cat]] += total
         elif cat not in IGNORED_CATEGORIES:
             unmapped.append((cat, total))
     if unmapped:
@@ -150,11 +150,6 @@ def main():
               "to roll them):", file=sys.stderr)
         for cat, total in unmapped:
             print(f"  {cat:<24} {total:>12,.2f}", file=sys.stderr)
-    for item, val in by_item.items():
-        if val < 0:
-            print(f"WARNING: {item} rolled up NEGATIVE ({val:,.2f}) — drivers "
-                  f"hold positive magnitudes. Usually a wrong flow type in "
-                  f"driver_map.json (\"revenue\" vs \"cost\").", file=sys.stderr)
 
     _, cash_rows = novamind_query(
         f"SELECT COALESCE(SUM(amount), 0) AS cash FROM ledger WHERE day <= {d1}"

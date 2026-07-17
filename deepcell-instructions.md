@@ -52,15 +52,20 @@ When you grow the model, keep the helpers working:
   all contexts (W1..W72) — a gap breaks the `EndingCash` roll-forward from
   that week on, and `roll_week.py` then can't print the 12 forecast numbers.
   Seed unknown future weeks with your current belief (or 0).
+- **Drivers hold ledger-signed values.** Cash-bridge drivers store the sim
+  ledger's numbers verbatim — inflows positive, outflows negative (so cost
+  drivers are negative) — and `NetCashFlow` is a plain `+` sum. Keep it that
+  way: when you add a cash driver, give it a label that states the sign
+  convention and wire it into `NetCashFlow` with `+`. Never convert signs in
+  scripts — arithmetic belongs in the model's formulas or the SQL, nowhere
+  in between.
 - **Register ledger-backed drivers in `driver_map.json`.** `roll_week.py`
   only rolls actuals for mapped ledger categories. If your new driver
-  corresponds to one, add `{"<ledger_category>": ["<ItemId>", "revenue" or
-  "cost"]}` to `driver_map.json` in the workspace ("cost" flips the ledger's
-  negative sums to the positive magnitudes drivers hold) — otherwise its
-  completed weeks silently keep your old beliefs while `LedgerCash` moves,
-  and your calibration log conflates forecast error with roll
-  incompleteness. `roll_week.py` warns about unmapped categories and about
-  drivers that roll up negative (the wrong-flow-type signature).
+  corresponds to one, add `{"<ledger_category>": "<ItemId>"}` to
+  `driver_map.json` in the workspace — otherwise its completed weeks
+  silently keep your old beliefs while `LedgerCash` moves, and your
+  calibration log conflates forecast error with roll incompleteness.
+  `roll_week.py` warns about unmapped categories.
 - Drivers that don't map to a ledger category (quality bars, churn rates)
   are yours to update — roll_week never touches them.
 

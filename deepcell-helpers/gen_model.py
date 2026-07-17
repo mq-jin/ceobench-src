@@ -5,13 +5,12 @@ Usage: python3 gen_model.py [--weeks 72] [--file novamind.deepcell]
 
 Design (deliberately status-free to avoid actual/projected calc-resolution
 mismatches): every driver holds ONE value per week — the current belief for
-future weeks, the realized value for completed weeks (the agent overwrites
-them from the ledger at the start of each week). Driver values are
-LEDGER-SIGNED (inflows positive, outflows negative, exactly as the sim DB
-reports them); all arithmetic lives in the model's formulas. NetCashFlow and
-EndingCash are CalcDefs over the drivers; LedgerCash is the sim-ledger truth
-anchor the agent writes weekly. Scenarios `low`/`high` carry 95%-band driver
-overrides.
+future weeks, the realized value for completed weeks (roll_week.py overwrites
+them). Driver values are LEDGER-SIGNED (inflows positive, outflows negative,
+exactly as the sim DB reports them); all arithmetic lives in the model's
+formulas, none in the helper scripts. NetCashFlow and EndingCash are CalcDefs over the drivers; LedgerCash is
+the sim-ledger truth anchor written by roll_week.py. Scenarios `low`/`high`
+carry 95%-band driver overrides.
 """
 import argparse
 import os

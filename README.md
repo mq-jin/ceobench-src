@@ -237,7 +237,8 @@ the Setup section (e.g. `OPENROUTER_API_KEY`).
 
 | Piece | Role |
 |---|---|
-| `gen_model.py` | Seeds the default cash model (weekly contexts, 10 ledger-signed drivers, `NetCashFlow`/`EndingCash` CalcDefs, `LedgerCash` truth anchor, `low`/`high` scenarios) into the active deepcell workspace. Re-run before every fresh game. |
+| `gen_model.py` | Seeds the default cash model (weekly contexts, 10 drivers, `NetCashFlow`/`EndingCash` CalcDefs, `LedgerCash` truth anchor, `low`/`high` scenarios) into the active deepcell workspace. Re-run before every fresh game. |
+| `roll_week.py <week>` | Rolls a completed week from forecast to actual: pulls per-category ledger sums from the sim into the model, logs forecast-vs-actual to `forecast_log.csv`, prints the 12-number `next-week` payload (point/low/high at +1/+4/+12/+26 weeks). |
 | `advance_week.py <week> '<rationale>' <12 numbers>` | **Reasoning gate.** Refuses to advance unless the reasoning graph has a `wk<N>_*` claim for the week (and, from week 2 on, an argument edge linking it to prior reasoning), and the forecast triples are ordered `low <= point <= high`. Only then does it call `./novamind-operation next-week`. |
 | `deepcell-instructions.md` | The weekly playbook appended to the agent's generated `CLAUDE.md` via `CEOBENCH_EXTRA_INSTRUCTIONS`. |
 

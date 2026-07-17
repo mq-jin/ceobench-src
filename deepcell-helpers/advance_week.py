@@ -11,22 +11,63 @@ base scenario, band from the `low`/`high` scenarios — and submits exactly
 those to `./novamind-operation next-week`. To change the forecast, change
 the model: update the drivers (and scenario overrides), then run this.
 
+After a successful advance it also appends a calibration row to
+forecast_log.csv automatically: the week's realized cumulative ledger cash,
+compared against the +1w point submitted at the PREVIOUS advance. The
+calibration record exists whether or not you remember it.
+
 The reasoning-record discipline (a wk<N>_* claim + argument edge before
 advancing) lives in the instructions, not here.
 """
+import csv
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from roll_week import TOTAL_WEEKS, deepcell_value
+from roll_week import TOTAL_WEEKS, deepcell_value, novamind_query
 
 HORIZONS = (1, 4, 12, 26)
+LOG = Path("forecast_log.csv")
+LOG_HEADER = ["week", "realized_cash", "prev_point_forecast", "pct_error",
+              "next_point", "next_low", "next_high"]
 
 
 def fail(msg: str):
     print(f"NOT advanced.\n{msg}", file=sys.stderr)
     sys.exit(1)
+
+
+def log_calibration(week: int, next_triple):
+    """Append realized-vs-previous-forecast for week N + this advance's +1w
+    forecast. All numbers come from the sim ledger or the model."""
+    _, rows = novamind_query(
+        f"SELECT COALESCE(SUM(amount), 0) AS cash FROM ledger "
+        f"WHERE day <= {week * 7}"
+    )
+    r0 = rows[0]
+    realized = float(r0["cash"] if isinstance(r0, dict) else r0[0])
+
+    prev_point, pct = "", ""
+    if LOG.exists():
+        last = list(csv.DictReader(LOG.open()))
+        if last and last[-1].get("next_point"):
+            prev_point = float(last[-1]["next_point"])
+            pct = round(100 * (prev_point - realized) / max(abs(realized), 1), 2)
+
+    new = not LOG.exists()
+    with LOG.open("a", newline="") as f:
+        w = csv.writer(f)
+        if new:
+            w.writerow(LOG_HEADER)
+        w.writerow([week, round(realized, 2), prev_point, pct, *next_triple])
+    if pct != "":
+        print(f"calibration: week {week} realized {realized:,.2f} vs "
+              f"forecast {prev_point:,.2f} ({pct:+}%) — logged.")
+    else:
+        print(f"calibration: week {week} realized {realized:,.2f} logged "
+              f"(no prior forecast to compare).")
 
 
 def main():
@@ -62,6 +103,12 @@ def main():
         ["./novamind-operation", "next-week", rationale]
         + [str(n) for n in nums],
     )
+    if proc.returncode == 0:
+        try:
+            log_calibration(week, nums[0:3])
+        except Exception as e:  # never let logging mask a successful advance
+            print(f"WARNING: advance succeeded but calibration logging "
+                  f"failed: {e}", file=sys.stderr)
     sys.exit(proc.returncode)
 
 

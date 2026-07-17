@@ -298,6 +298,23 @@ class ClaudeCodeCLIRunner:
 
         (self.agent_workspace / "daily_scripts").mkdir(exist_ok=True)
 
+        # Optional helper scripts, copied INTO the workspace so the agent's
+        # instructions never need absolute paths that lead back into this
+        # repository's source tree.
+        helpers_dir = os.environ.get("CEOBENCH_HELPERS_DIR")
+        if helpers_dir:
+            src_helpers = Path(helpers_dir)
+            if not src_helpers.is_dir():
+                raise FileNotFoundError(
+                    f"CEOBENCH_HELPERS_DIR={helpers_dir} is not a directory"
+                )
+            shutil.copytree(
+                src_helpers,
+                self.agent_workspace / "deepcell-helpers",
+                ignore=shutil.ignore_patterns("__pycache__", "*.sh"),
+                dirs_exist_ok=True,
+            )
+
         # Create the session via host-side zipapp.
         env = os.environ.copy()
         env["NOVAMIND_SERVER_MODE"] = "1"

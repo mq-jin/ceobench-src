@@ -44,6 +44,7 @@ Ready. Launch a run with:
   export NMDB_KEY=<published SQLCipher key from KEYS.md>
   export DEEPCELL_WORKSPACE=$SLUG
   export CEOBENCH_EXTRA_INSTRUCTIONS=\$PWD/deepcell-instructions.md
+  export CEOBENCH_HELPERS_DIR=\$PWD/deepcell-helpers   # copied into the workspace
   uv run python -m saas_bench.agents.claude_code.run_test \\
       --days 500 --seed 42 --workspace claude_code_runs
 EOF

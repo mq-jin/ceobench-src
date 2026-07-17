@@ -8,11 +8,16 @@ Usage (run from the agent workspace, where ./novamind-operation lives):
 What it does:
   1. Pulls week N's realized flows from the sim ledger (per-category sums via
      `./novamind-operation query`) and the cumulative ledger cash.
-  2. Logs forecast-vs-actual for week N to forecast_log.csv (calibration).
-  3. Overwrites week N's driver values in novamind.deepcell with the actuals
+  2. Overwrites week N's driver values in novamind.deepcell with the actuals
      (base scenario) and writes LedgerCash (cumulative realized cash).
-  4. Prints the recomputed EndingCash path and the ready-to-use 12 forecast
-     numbers (point/low95/high95 at +1, +4, +12, +26 weeks) for `next-week`.
+     SubsRevenue is computed (NewSubs * AvgSubPrice), so it is never written:
+     instead the script reports the realized subscription total and warns if
+     the model's computed value has drifted from it — update NewSubs /
+     AvgSubPrice actuals (signups from the weekly report or subscriptions
+     table; price = revenue / signups, in SQL) to reconcile.
+  3. Prints the recomputed EndingCash path and reference forecasts
+     (point/low95/high95 at +1, +4, +12, +26 weeks). Calibration is logged
+     automatically by advance_week.py at each advance — not here.
 
 The model's future-week drivers are NOT touched — revising beliefs for
 upcoming weeks stays a judgment call (deepcell edit ... --scenario low/high
@@ -23,7 +28,6 @@ ledger-category -> driver map ({"<category>": "<ItemId>"}); ledger categories
 mapped by neither are warned about, not silently dropped. Ledger sums are
 written to drivers VERBATIM (signed) — all arithmetic stays in the model.
 """
-import csv
 import json
 import os
 import subprocess
@@ -37,7 +41,8 @@ TOTAL_WEEKS = int(os.environ.get("CEOBENCH_TOTAL_WEEKS", "72"))
 # (inflows positive, outflows negative) — the model's NetCashFlow formula is
 # a plain sum, and no arithmetic happens in this script.
 CATEGORY_TO_ITEM = {
-    "subscription_payment": "SubsRevenue",
+    # subscription_payment is handled specially: SubsRevenue is computed
+    # (NewSubs * AvgSubPrice), so the ledger total is reconciled, not written.
     "ad_revenue": "AdsRevenue",
     "capacity": "CapacityCost",
     "compute": "ComputeCost",
@@ -137,10 +142,12 @@ def main():
     def cell(row, idx, key):
         return row[key] if isinstance(row, dict) else row[idx]
 
-    unmapped = []
+    unmapped, subs_total = [], 0.0
     for r in rows:
         cat, total = cell(r, 0, "category"), float(cell(r, 1, "total") or 0)
-        if cat in category_map:
+        if cat == "subscription_payment":
+            subs_total += total
+        elif cat in category_map:
             by_item[category_map[cat]] += total
         elif cat not in IGNORED_CATEGORIES:
             unmapped.append((cat, total))
@@ -156,19 +163,26 @@ def main():
     )
     ledger_cash = float(cell(cash_rows[0], 0, "cash"))
 
-    # 2. calibration log (model's pre-roll forecast vs realized)
+    # 2. pre-roll forecast vs realized, printed for reference (the durable
+    #    calibration log is written by advance_week.py at each advance)
     forecast = deepcell_value("EndingCash", f"W{week}")
-    log = Path("forecast_log.csv")
-    new = not log.exists()
-    with log.open("a", newline="") as f:
-        w = csv.writer(f)
-        if new:
-            w.writerow(["week", "forecast_ending_cash", "ledger_cash", "pct_error"])
-        pct = (
-            round(100 * (forecast - ledger_cash) / max(abs(ledger_cash), 1), 2)
-            if forecast is not None else ""
-        )
-        w.writerow([week, forecast, round(ledger_cash, 2), pct])
+    pct = (
+        round(100 * (forecast - ledger_cash) / max(abs(ledger_cash), 1), 2)
+        if forecast is not None else None
+    )
+
+    # SubsRevenue is computed (NewSubs * AvgSubPrice) — reconcile, don't write
+    model_subs = deepcell_value("SubsRevenue", f"W{week}") or 0.0
+    model_ent = deepcell_value("EnterpriseRevenue", f"W{week}") or 0.0
+    subs_drift = subs_total - (model_subs + model_ent)
+    if abs(subs_drift) > max(0.01 * abs(subs_total), 1):
+        print(f"WARNING: realized subscription_payment {subs_total:,.2f} vs "
+              f"model SubsRevenue+EnterpriseRevenue "
+              f"{model_subs + model_ent:,.2f} (drift {subs_drift:,.2f}).\n"
+              f"  SubsRevenue is computed — reconcile by writing W{week} "
+              f"ACTUALS into its inputs: NewSubs (signups from the weekly "
+              f"report or subscriptions table) and AvgSubPrice (= subs "
+              f"revenue / signups, computed in SQL).", file=sys.stderr)
 
     # 3. write actuals into the model
     batch = [
@@ -186,13 +200,15 @@ def main():
     print(f"Week {week} rolled to actual. Realized flows:")
     for item, val in sorted(by_item.items()):
         print(f"  {item:<18} {val:>12,.2f}")
+    print(f"  {'subscription_pmt':<18} {subs_total:>12,.2f}  (reconcile via "
+          f"NewSubs/AvgSubPrice — SubsRevenue is computed)")
     print(f"  {'LedgerCash':<18} {ledger_cash:>12,.2f}")
     if forecast is not None:
         print(f"Model forecast for W{week} was {forecast:,.2f} "
-              f"(error {pct}% vs ledger) — logged to forecast_log.csv")
+              f"(error {pct}% vs ledger)")
 
     horizons = [1, 4, 12, 26]
-    nums, detail = [], []
+    detail = []
     for h in horizons:
         target = min(week + h, TOTAL_WEEKS)
         point = deepcell_value("EndingCash", f"W{target}")
@@ -204,12 +220,10 @@ def main():
             print(f"WARNING: no EndingCash for W{target}; fill drivers first")
             return
         lo, hi = min(low, high, point), max(low, high, point)
-        nums += [round(point), round(lo), round(hi)]
         detail.append(f"  +{h}w (W{target}): point={point:,.0f} low={lo:,.0f} high={hi:,.0f}")
-    print("\nForecast horizons (after updating future drivers, re-run for fresh numbers):")
+    print("\nReference forecasts (advance_week.py re-reads the model at "
+          "submit time — update future drivers first, then advance):")
     print("\n".join(detail))
-    print("\n12 numbers for next-week:")
-    print("  " + " ".join(str(n) for n in nums))
 
 
 if __name__ == "__main__":

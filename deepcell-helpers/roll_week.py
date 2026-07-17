@@ -19,8 +19,8 @@ upcoming weeks stays a judgment call (deepcell edit ... --scenario low/high
 for the band).
 
 Grown models: a workspace-local driver_map.json extends the built-in
-ledger-category -> driver map ({"<category>": ["<ItemId>", 1 | -1]}); ledger
-categories mapped by neither are warned about, not silently dropped.
+ledger-category -> driver map ({"<category>": ["<ItemId>", "revenue"|"cost"]});
+ledger categories mapped by neither are warned about, not silently dropped.
 """
 import csv
 import json
@@ -58,7 +58,12 @@ def load_driver_map() -> dict:
     When you grow the model with a new driver that corresponds to a ledger
     category, register it here so this script rolls its actuals too:
 
-        driver_map.json:  {"<ledger_category>": ["<ItemId>", 1 | -1]}
+        driver_map.json:  {"<ledger_category>": ["<ItemId>", "revenue" | "cost"]}
+
+    The flow type converts ledger convention (signed cash: revenues positive,
+    costs negative) to model convention (positive magnitudes; direction lives
+    in the NetCashFlow formula): "revenue" keeps the ledger sum as-is, "cost"
+    negates it.
     """
     mapping = dict(CATEGORY_TO_ITEM)
     path = Path("driver_map.json")
@@ -68,10 +73,11 @@ def load_driver_map() -> dict:
         except json.JSONDecodeError as e:
             sys.exit(f"driver_map.json is not valid JSON: {e}")
         for cat, spec in extra.items():
-            item, sign = spec[0], int(spec[1])
-            if sign not in (1, -1):
-                sys.exit(f"driver_map.json: sign for '{cat}' must be 1 or -1")
-            mapping[cat] = (item, sign)
+            item, flow = spec[0], spec[1]
+            if flow not in ("revenue", "cost"):
+                sys.exit(f"driver_map.json: flow for '{cat}' must be "
+                         f"\"revenue\" or \"cost\" (got {flow!r})")
+            mapping[cat] = (item, 1 if flow == "revenue" else -1)
     return mapping
 
 
@@ -144,6 +150,11 @@ def main():
               "to roll them):", file=sys.stderr)
         for cat, total in unmapped:
             print(f"  {cat:<24} {total:>12,.2f}", file=sys.stderr)
+    for item, val in by_item.items():
+        if val < 0:
+            print(f"WARNING: {item} rolled up NEGATIVE ({val:,.2f}) — drivers "
+                  f"hold positive magnitudes. Usually a wrong flow type in "
+                  f"driver_map.json (\"revenue\" vs \"cost\").", file=sys.stderr)
 
     _, cash_rows = novamind_query(
         f"SELECT COALESCE(SUM(amount), 0) AS cash FROM ledger WHERE day <= {d1}"

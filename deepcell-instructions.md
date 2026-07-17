@@ -54,11 +54,13 @@ When you grow the model, keep the helpers working:
   Seed unknown future weeks with your current belief (or 0).
 - **Register ledger-backed drivers in `driver_map.json`.** `roll_week.py`
   only rolls actuals for mapped ledger categories. If your new driver
-  corresponds to one, add `{"<ledger_category>": ["<ItemId>", 1 or -1]}`
-  (sign: 1 = revenue, -1 = cost) to `driver_map.json` in the workspace —
-  otherwise its completed weeks silently keep your old beliefs while
-  `LedgerCash` moves, and your calibration log conflates forecast error with
-  roll incompleteness. `roll_week.py` warns about unmapped categories.
+  corresponds to one, add `{"<ledger_category>": ["<ItemId>", "revenue" or
+  "cost"]}` to `driver_map.json` in the workspace ("cost" flips the ledger's
+  negative sums to the positive magnitudes drivers hold) — otherwise its
+  completed weeks silently keep your old beliefs while `LedgerCash` moves,
+  and your calibration log conflates forecast error with roll
+  incompleteness. `roll_week.py` warns about unmapped categories and about
+  drivers that roll up negative (the wrong-flow-type signature).
 - Drivers that don't map to a ledger category (quality bars, churn rates)
   are yours to update — roll_week never touches them.
 

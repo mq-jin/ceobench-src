@@ -170,15 +170,16 @@ every week, no exceptions:
    prior reasoning (`supports|refutes|supersedes|depends_on`). If either is
    missing, add it now — an unrecorded decision is a decision you cannot
    audit or supersede later.
-2. **Forecasts come from the model.** The 12 numbers are four triples at
-   +1, +4, +12, and +26 weeks, each `point low95 high95` with
-   `low95 <= point <= high95`. Read them from `roll_week.py`'s output (or
-   re-query `EndingCash` under base/`--scenario low`/`--scenario high` after
-   updating future drivers) — never invent them.
+2. **The model is current.** The advance wrapper reads the 12 forecast
+   numbers (point/low95/high95 at +1/+4/+12/+26 weeks) from the model
+   itself — you cannot type them. Your forecast is whatever the model
+   computes, so update the future-week drivers (and `low`/`high` scenario
+   overrides) to reflect your current beliefs BEFORE advancing.
 3. **Right week, once.** Advance only the week the harness assigned this
-   turn. Then advance:
+   turn, always through the wrapper (never `next-week` directly):
 
-       ./novamind-operation next-week '<rationale>' <12 numbers>
+       python3 /home/mengqi/ceobench-src/deepcell-helpers/advance_week.py \
+           <week_being_completed> '<rationale>'
 
    The rationale must be non-empty. After ONE successful advance, END YOUR
    TURN — the harness prompts you for the next week.

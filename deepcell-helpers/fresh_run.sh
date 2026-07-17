@@ -27,6 +27,7 @@ echo "==> restoring committed helpers + instructions"
 git -C "$REPO" checkout -- \
     deepcell-helpers/gen_model.py \
     deepcell-helpers/roll_week.py \
+    deepcell-helpers/advance_week.py \
     deepcell-instructions.md
 
 echo "==> creating fresh workspace '$SLUG' + seeding model ($WEEKS weeks)"

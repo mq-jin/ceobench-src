@@ -104,6 +104,7 @@ class ClaudeCodeCLIRunner:
         claude_bin: Optional[str] = None,
         effort: Optional[str] = None,
         deepcell: bool = True,
+        advance_grace_seconds: float = 900.0,
     ) -> None:
         self.model = model
         self.seed = seed
@@ -115,6 +116,7 @@ class ClaudeCodeCLIRunner:
         self.initial_cash = initial_cash
         self.label = label
         self.max_resume_attempts_per_week = max_resume_attempts_per_week
+        self.advance_grace_seconds = advance_grace_seconds
         # Look up claude binary: explicit arg > $CLAUDE_BIN > PATH > common fallback.
         if claude_bin:
             self.claude_bin = claude_bin
@@ -626,6 +628,74 @@ class ClaudeCodeCLIRunner:
             "elapsed_s": elapsed,
         }
 
+    # ------------------------------------------------- in-flight advance grace
+    def _server_stderr_size(self) -> int:
+        try:
+            return (self.logs_dir / "api_server_stderr.log").stat().st_size
+        except OSError:
+            return -1
+
+    def _grace_poll_for_advance(
+        self, sim_day: int, verbose: bool = True
+    ) -> Dict[str, Any]:
+        """Wait for an in-flight ``next-week`` to land before failing an attempt.
+
+        Late-game weeks take minutes of single-threaded server time (each
+        step_day ~14s at 370k customers), so a claude turn can end — or time
+        out — while the advance is still processing. Burning retry attempts
+        during that window is how the v8-baseline run stalled at week 17.
+
+        Liveness is judged by the server's stderr log, which grows while the
+        sim is stepping: /game-status timing out while stderr grows means
+        "busy, keep waiting"; timing out while stderr is static for 3+ minutes
+        means the server is wedged (e.g. stuck on a dead client socket) and is
+        restarted — safe, because the sim only commits completed weeks, so a
+        lost in-flight advance is simply re-run.
+        """
+        deadline = time.monotonic() + self.advance_grace_seconds
+        last_size = self._server_stderr_size()
+        static_since = time.monotonic()
+        announced = False
+        while time.monotonic() < deadline:
+            responsive = False
+            try:
+                st = self._http_get("/game-status", timeout=30)
+                responsive = True
+                if int(st.get("day", sim_day)) > sim_day:
+                    if verbose and announced:
+                        print("  ✓ in-flight advance landed", flush=True)
+                    return st
+            except Exception:
+                pass
+            size = self._server_stderr_size()
+            if size != last_size:
+                last_size = size
+                static_since = time.monotonic()
+                if verbose and not announced:
+                    announced = True
+                    print(
+                        "  ⏳ server still stepping — waiting for in-flight "
+                        f"advance (grace {self.advance_grace_seconds / 60:.0f} min)",
+                        flush=True,
+                    )
+            elif not responsive and time.monotonic() - static_since > 180:
+                if verbose:
+                    print(
+                        "  ⚠ server wedged (status timeouts, no stderr growth "
+                        "for 3 min) — restarting it on the committed state",
+                        flush=True,
+                    )
+                self._stop_server()
+                self._launch_server()
+                last_size = self._server_stderr_size()
+                static_since = time.monotonic()
+            elif responsive:
+                # Server idle and answering with an unchanged day: nothing is
+                # in flight — no reason to keep waiting.
+                return st
+            time.sleep(20)
+        return self._get_game_status()
+
     # -------------------------------------------------------------------- run
     def setup(self) -> None:
         if not self.continue_from:
@@ -734,6 +804,13 @@ class ClaudeCodeCLIRunner:
 
                 new_status = self._get_game_status()
                 new_sim_day = int(new_status.get("day", sim_day))
+                if new_sim_day <= sim_day:
+                    # Possibly an in-flight next-week (or a wedged server) —
+                    # give it a grace window before this attempt counts.
+                    new_status = self._grace_poll_for_advance(
+                        sim_day, verbose=verbose
+                    )
+                    new_sim_day = int(new_status.get("day", sim_day))
                 self._log_event(
                     self.timing_log,
                     {
@@ -854,6 +931,16 @@ def main() -> None:
             "--continue-from the stored mode always wins."
         ),
     )
+    p.add_argument(
+        "--advance-grace-seconds",
+        type=float,
+        default=900.0,
+        help=(
+            "After an attempt that didn't advance the sim day, wait up to this "
+            "long for an in-flight next-week to land (wedged servers are "
+            "restarted) before the attempt counts as failed."
+        ),
+    )
     p.add_argument("--quiet", action="store_true")
     args = p.parse_args()
 
@@ -869,6 +956,7 @@ def main() -> None:
         claude_bin=args.claude_bin,
         effort=args.effort,
         deepcell=not args.no_deepcell,
+        advance_grace_seconds=args.advance_grace_seconds,
     )
     result = runner.run(verbose=not args.quiet)
     print(f"\nResult: {json.dumps(result, indent=2)}")

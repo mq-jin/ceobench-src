@@ -262,6 +262,22 @@ versioned `novamind.deepcell` (drivers, forecasts, and a claim-per-decision
 reasoning graph with `supersedes` edges when the strategy pivots), and
 `forecast_log.csv` (forecast-vs-actual calibration per week).
 
+**Baseline A/B arm (plain Claude Code, no DeepCell):** pass `--no-deepcell` to
+run the identical harness with the DeepCell layer removed — no helper scripts
+copied into the workspace, no extra CLAUDE.md instructions, no workspace model.
+The flag scrubs `CEOBENCH_EXTRA_INSTRUCTIONS` / `CEOBENCH_HELPERS_DIR` /
+`DEEPCELL_WORKSPACE` even if exported, and the mode is persisted in the run's
+`config.json` so `--continue-from` can never flip arms mid-run:
+
+```bash
+uv run python -m saas_bench.agents.claude_code.run_test \
+    --days 500 --seed 42 --workspace claude_code_runs --no-deepcell
+```
+
+Everything else (model, seed, prompts, dashboard, one-`claude -p`-per-week
+loop, session-limit auto-wait) is identical, so a with-DeepCell run and a
+`--no-deepcell` run on the same seed differ only by the decision-support layer.
+
 ### 🧮 Option E (this fork): Codex CLI + DeepCell decision-support
 
 The same harness can run with a local **Codex CLI** agent. Codex receives the

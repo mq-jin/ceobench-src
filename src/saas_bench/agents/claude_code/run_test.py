@@ -103,6 +103,7 @@ class ClaudeCodeCLIRunner:
         max_resume_attempts_per_week: int = 3,
         claude_bin: Optional[str] = None,
         effort: Optional[str] = None,
+        deepcell: bool = True,
     ) -> None:
         self.model = model
         self.seed = seed
@@ -147,6 +148,27 @@ class ClaudeCodeCLIRunner:
             self.workspace_dir = self.workspace_base / f"run_{self.run_id}"
             self.workspace_dir.mkdir(parents=True, exist_ok=True)
             self.continue_from = False
+
+        # Baseline A/B mode: plain Claude Code with no DeepCell decision-support
+        # layer. The mode is persisted in config.json and, on --continue-from,
+        # the persisted value wins so a resume can never flip arms mid-run.
+        if self.continue_from:
+            cfg_file = self.workspace_dir / "config.json"
+            if cfg_file.exists():
+                stored = json.loads(cfg_file.read_text()).get("deepcell_enabled")
+                if stored is not None:
+                    deepcell = bool(stored)
+        self.deepcell = deepcell
+        if not self.deepcell:
+            # Scrub every DeepCell hook so neither workspace setup (helpers
+            # copy, CLAUDE.md extra instructions) nor the claude -p subprocess
+            # env (inherited via os.environ.copy()) carries the integration.
+            for var in (
+                "CEOBENCH_EXTRA_INSTRUCTIONS",
+                "CEOBENCH_HELPERS_DIR",
+                "DEEPCELL_WORKSPACE",
+            ):
+                os.environ.pop(var, None)
 
         self.agent_workspace = self.workspace_dir / "agent_workspace"
         self.logs_dir = self.workspace_dir / "logs"
@@ -501,6 +523,7 @@ class ClaudeCodeCLIRunner:
             "total_days": self.total_days,
             "initial_cash": self.initial_cash,
             "agent_type": "claude_code",
+            "deepcell_enabled": self.deepcell,
             "api_server_port": self._server_port,
             "session_id": self._session_id,
             "label": self.label,
@@ -636,7 +659,10 @@ class ClaudeCodeCLIRunner:
         if verbose:
             print(f"\n{'='*60}")
             print(f"Claude Code Run — {self.run_id}")
-            print(f"Model: {self.model} | seed: {self.seed} | days: {self.total_days}")
+            print(
+                f"Model: {self.model} | seed: {self.seed} | days: {self.total_days}"
+                f" | deepcell: {'on' if self.deepcell else 'OFF (baseline)'}"
+            )
             print(f"Workspace: {self.workspace_dir}")
             print(f"Start sim_day={sim_day} cash=${status.get('cash', 0):,.0f}")
             print(f"{'='*60}\n", flush=True)
@@ -818,6 +844,16 @@ def main() -> None:
         default=None,
         help="Thinking budget passed to `claude -p --effort`.",
     )
+    p.add_argument(
+        "--no-deepcell",
+        action="store_true",
+        help=(
+            "Baseline A/B arm: plain Claude Code with no DeepCell layer. "
+            "Ignores CEOBENCH_EXTRA_INSTRUCTIONS / CEOBENCH_HELPERS_DIR / "
+            "DEEPCELL_WORKSPACE even if set. Persisted in config.json; on "
+            "--continue-from the stored mode always wins."
+        ),
+    )
     p.add_argument("--quiet", action="store_true")
     args = p.parse_args()
 
@@ -832,6 +868,7 @@ def main() -> None:
         max_resume_attempts_per_week=args.max_resume_attempts_per_week,
         claude_bin=args.claude_bin,
         effort=args.effort,
+        deepcell=not args.no_deepcell,
     )
     result = runner.run(verbose=not args.quiet)
     print(f"\nResult: {json.dumps(result, indent=2)}")
